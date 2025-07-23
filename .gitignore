@@ -1,0 +1,25 @@
+# Ignore environment files 
+.venv
+.venv/
+
+# Ignore data folders
+sentinel_downloads/
+s2_patches/
+s2_tifs/
+tifs/ 
+lidar_patches/
+
+# Ignore test code
+test_notebooks/
+
+# Ignore Tom's preprocessing script
+readAndGridLas.py
+
+# Ignore output images
+output_images/
+
+# Ignore saved models
+*.pth
+
+# Ignore login file
+copernicus_login.py
