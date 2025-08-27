@@ -90,12 +90,7 @@ def train_model(config):
     train_dataset.dataset.split = "train"
     val_dataset.dataset.split = "val"
 
-    # Load fixed eval index if available
-    eval_json = config["evaluation"]["eval_index_json"]
-    if eval_json and os.path.exists(eval_json):
-        with open(eval_json, "r") as f:
-            val_dataset.dataset.eval_patch_order = json.load(f)
-
+    # Empty cache
     torch.cuda.empty_cache()
 
     # Create data loaders
@@ -280,10 +275,6 @@ def run_reconstruction_evaluation(model, val_dataset, config, scheduler=None):
 
     if hasattr(val_dataset, "dataset"):
         val_dataset.dataset.split = "val"
-        eval_json = config["evaluation"]["eval_index_json"]
-        if eval_json and os.path.exists(eval_json):
-            with open(eval_json, "r") as f:
-                val_dataset.dataset.eval_patch_order = json.load(f)
 
     output_dir = config["logging"]["output_dir"]
     os.makedirs(output_dir, exist_ok=True)

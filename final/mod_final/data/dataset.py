@@ -29,8 +29,7 @@ class LidarS2Dataset(Dataset):
     """
 
     def __init__(self, lidar_dir, s2_dir, s2_means, s2_stds,
-                 context_k=1, randomize_context=True,
-                 eval_patch_order_json=None, split="train",
+                 context_k=1, randomize_context=True, split="train",
                  augment=True, debug=False, target_s2_hw=(26, 26), ref_date="2024-04-26"):
         super().__init__()
         self.lidar_dir = lidar_dir
