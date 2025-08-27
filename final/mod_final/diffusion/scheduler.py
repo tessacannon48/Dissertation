@@ -1,4 +1,5 @@
 import torch
+import math
 
 # =============================================================================
 # DIFFUSION SCHEDULERS
@@ -25,18 +26,50 @@ class LinearDiffusionScheduler:
         return sqrt_alpha * x_start + sqrt_one_minus_alpha * noise
 
 class CosineDiffusionScheduler:
-    def __init__(self, timesteps=1000, device='cuda'):
+    """
+    Cosine noise schedule (Nichol & Dhariwal, 2021 style).
+    Exposes the same attributes as LinearDiffusionScheduler:
+      betas, alphas, alpha_cumprod, sqrt_alpha_cumprod, sqrt_one_minus_alpha_cumprod
+    """
+    def __init__(self, timesteps=1000, s=0.008, device='cuda', eps=1e-12):
         self.timesteps = timesteps
         self.device = device
-        steps = torch.arange(0, timesteps + 1, dtype=torch.float32)
-        alphas_cumprod = torch.cos(((steps / timesteps + 0.008) / 1.008) * math.pi * 0.5) ** 2
-        alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
-        self.alpha_cumprod = alphas_cumprod[:-1].to(device)
-        self.alphas = self.alpha_cumprod.clone()  # use directly
-        self.alpha_cumprod_prev = torch.cat([torch.tensor([1.], device=device), self.alpha_cumprod[:-1]])
 
-        self.sqrt_alpha_cumprod = torch.sqrt(self.alpha_cumprod)
-        self.sqrt_one_minus_alpha_cumprod = torch.sqrt(1 - self.alpha_cumprod)
+        # Build alpha_bar (cumprod) with cosine schedule
+        steps = torch.arange(timesteps + 1, dtype=torch.float32)
+        f = torch.cos(((steps / timesteps + s) / (1 + s)) * math.pi * 0.5) ** 2
+        alpha_bar = f / f[0]  # normalize so alpha_bar[0] = 1
+
+        # Convert alpha_bar -> per-step betas
+        alpha_bar = alpha_bar.to(device)
+        alpha_bar_t   = alpha_bar[1:]                      # t = 1..T
+        alpha_bar_t_1 = alpha_bar[:-1].clamp(min=eps)      # t-1 = 0..T-1
+
+        betas = (1.0 - (alpha_bar_t / alpha_bar_t_1)).clamp(1e-8, 0.999)  # [T]
+        alphas = (1.0 - betas).clamp(min=eps)
+
+        # Store canonical buffers (match fields used elsewhere)
+        self.betas = betas
+        self.alphas = alphas
+        self.alpha_cumprod = torch.cumprod(alphas, dim=0)                 # == alpha_bar[1:]
+        self.alpha_cumprod_prev = torch.cat(
+            [torch.ones(1, device=device), self.alpha_cumprod[:-1]], dim=0
+        )
+        self.sqrt_alpha_cumprod = torch.sqrt(self.alpha_cumprod.clamp(min=0.0, max=1.0))
+        self.sqrt_one_minus_alpha_cumprod = torch.sqrt(
+            (1.0 - self.alpha_cumprod).clamp(min=0.0, max=1.0)
+        )
+        self.sqrt_recip_alphas = torch.sqrt(1.0 / self.alphas)
+        self.posterior_variance = (
+            self.betas * (1.0 - self.alpha_cumprod_prev) / (1.0 - self.alpha_cumprod)
+        ).clamp(min=1e-20)
+        self.posterior_log_variance_clipped = torch.log(self.posterior_variance.clamp(min=1e-20))
+        self.posterior_mean_coef1 = (
+            self.betas * torch.sqrt(self.alpha_cumprod_prev) / (1.0 - self.alpha_cumprod)
+        )
+        self.posterior_mean_coef2 = (
+            (1.0 - self.alpha_cumprod_prev) * torch.sqrt(self.alphas) / (1.0 - self.alpha_cumprod)
+        )
 
     def q_sample(self, x_start, t, noise=None):
         if noise is None:

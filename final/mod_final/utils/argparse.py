@@ -12,7 +12,7 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description='Train diffusion model for LiDAR generation')
 
     # Core argument: path to the config file
-    parser.add_argument('--config', type=str, default='config.yaml',
+    parser.add_argument('--config', type=str, default='/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/final/mod_final/config.yaml',
                         help='Path to the YAML configuration file')
 
     # Data paths

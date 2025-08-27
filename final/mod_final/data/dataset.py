@@ -20,17 +20,18 @@ class LidarS2Dataset(Dataset):
     """
     Returns:
       dict {
-        lidar: [1, H, W],      # ONLY the data band (channel 0)
+        lidar: [1, H, W],      # the data band (RANSAC residuals)
         s2:    [k×4, Hc, Wc],  # k × (R,G,B,NIR)
         attrs: [k×8],          # k × (cloud[1] + sun[3] + view[3] + age_days[1])
         mask:  [H, W],         # validity mask from LiDAR channel 1
+        chosen_ids: [k],       # Indices of the S2 patches used for conditioning
       }
     """
 
     def __init__(self, lidar_dir, s2_dir, s2_means, s2_stds,
                  context_k=1, randomize_context=True,
                  eval_patch_order_json=None, split="train",
-                 augment=True, target_s2_hw=(26, 26), ref_date="2024-04-26"):
+                 augment=True, debug=False, target_s2_hw=(26, 26), ref_date="2024-04-26"):
         super().__init__()
         self.lidar_dir = lidar_dir
         self.s2_dir = s2_dir
@@ -44,41 +45,38 @@ class LidarS2Dataset(Dataset):
         self.split = split
 
         self.ref_date = _dt.date.fromisoformat(str(ref_date)[:10])
-
-        # Load eval patch order if provided
-        self.eval_patch_order = None
-        if eval_patch_order_json and os.path.exists(eval_patch_order_json):
-            with open(eval_patch_order_json, "r") as f:
-                self.eval_patch_order = json.load(f)
-
+        
+        # Load all lidar paths
         self.lidar_paths = sorted(glob.glob(os.path.join(lidar_dir, "lidar_patch_*.tif")))
         self.s2_group_dirs = {
             os.path.basename(p).split(".")[0].split("_")[-1]: p
             for p in glob.glob(os.path.join(s2_dir, "s2_patch_*")) if os.path.isdir(p)
         }
 
-        # New: Pre-load all data into memory
+        # Conditionally load a subset of the data for debugging
+        if debug:
+            print("DEBUG MODE: Loading only 100 samples.")
+            lidar_paths_to_load = self.lidar_paths[:100]
+        else:
+            lidar_paths_to_load = self.lidar_paths
+
+        # Pre-load all data into memory
         self.data_cache = []
-        for lidar_path in tqdm(self.lidar_paths, desc="Pre-loading dataset"):
+        for lidar_path in tqdm(lidar_paths_to_load, desc="Pre-loading dataset"):
             pid = self._extract_id(lidar_path)
             s2_group_dir = os.path.join(self.s2_dir, f"s2_patch_{pid}")
-
-            # Check for a complete set of S2 images
             if all(os.path.exists(os.path.join(s2_group_dir, f"t{i}.tif")) for i in range(self.max_s2)):
-                # Read LiDAR data
                 with rasterio.open(lidar_path) as src:
                     lidar_full = torch.from_numpy(src.read().astype(np.float32))
                 data = lidar_full[0:1].clamp(-1.0, 1.0)
                 mask = lidar_full[1]
                 
-                # Read all S2 patches
                 s2_patches = []
                 for i in range(self.max_s2):
                     with rasterio.open(os.path.join(s2_group_dir, f"t{i}.tif")) as src:
                         arr = torch.from_numpy(src.read()[:4].astype(np.float32))
                     s2_patches.append(arr)
                 
-                # Read all attributes
                 all_attrs = self._parse_attrs_json(os.path.join(s2_group_dir, "attrs.json"))
 
                 self.data_cache.append({
@@ -89,6 +87,18 @@ class LidarS2Dataset(Dataset):
                     "tile_id": pid
                 })
         
+        # New: Pre-generate patch selections for the entire dataset
+        self.patch_selections = {}
+        for idx, sample in enumerate(self.data_cache):
+            tile_id = sample['tile_id']
+            # For deterministic evaluation, always use the first k patches
+            if not self.randomize_context:
+                chosen_ids = list(range(self.context_k))
+            # For randomized evaluation, select k random patches
+            else:
+                chosen_ids = sorted(random.sample(range(self.max_s2), self.context_k))
+            self.patch_selections[tile_id] = chosen_ids
+            
         self.num_samples = len(self.data_cache)
         print(f"Loaded {self.num_samples} matched LiDAR↔6×S2 groups into memory.")
 
@@ -136,23 +146,16 @@ class LidarS2Dataset(Dataset):
         sample = self.data_cache[idx]
         data = sample["lidar"]
         mask = sample["mask"]
-        s2_patches = sample["s2_patches"]
+        s2_patches_full = sample["s2_patches"]
         all_attrs = sample["attrs"]
         tile_id = sample["tile_id"]
 
-        # Choose which S2 indices to include
-        if self.split == "train" and self.randomize_context:
-            chosen_ids = sorted(random.sample(range(self.max_s2), self.context_k))
-        elif self.split in ["val", "test"] and self.eval_patch_order:
-            chosen_ids = self.eval_patch_order.get(tile_id, list(range(self.max_s2)))[:self.context_k]
-        else:
-            chosen_ids = list(range(self.context_k))
+        # Use the pre-generated selection from __init__
+        chosen_ids = self.patch_selections[tile_id]
         
-        # Collect chosen S2 patches and attributes
-        s2_list = [s2_patches[i] for i in chosen_ids]
+        s2_list = [s2_patches_full[i] for i in chosen_ids]
         attrs_list = [all_attrs[i] for i in chosen_ids]
 
-        # Interpolate and concatenate S2 patches
         s2_processed = []
         for arr in s2_list:
             if arr.shape[-2:] != self.target_s2_hw:
@@ -160,7 +163,6 @@ class LidarS2Dataset(Dataset):
             s2_processed.append(arr)
         s2 = torch.cat(s2_processed, dim=0)
 
-        # Normalize
         if self.s2_means.numel() == 4:
             means = self.s2_means.repeat(self.context_k).view(-1,1,1)
             stds  = self.s2_stds.repeat(self.context_k).view(-1,1,1)
@@ -172,8 +174,7 @@ class LidarS2Dataset(Dataset):
 
         attrs = torch.cat(attrs_list, dim=0)
 
-        # Augment
-        if self.augment:
+        if self.augment and self.split == "train":
             if random.random() > 0.5:
                 data = TF.hflip(data); s2 = TF.hflip(s2); mask = TF.hflip(mask)
             if random.random() > 0.5:
@@ -189,4 +190,5 @@ class LidarS2Dataset(Dataset):
             "lidar": data.float(),
             "mask": mask.float(),
             "attrs": attrs.float(),
+            "chosen_ids": torch.tensor(chosen_ids, dtype=torch.long)
         }

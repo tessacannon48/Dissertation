@@ -47,7 +47,6 @@ def timestep_embedding(timesteps, dim):
     emb = torch.cat([torch.sin(emb), torch.cos(emb)], dim=1)
     return F.pad(emb, (0, 1, 0, 0)) if dim % 2 else emb
 
-
 def masked_mse_loss(pred, target, mask):
     """Calculate MSE loss with mask weighting."""
     return ((pred - target) ** 2 * mask.unsqueeze(1)).sum() / mask.sum()
