@@ -11,6 +11,8 @@ from tqdm import tqdm
 import os
 import json
 import datetime as _dt
+import hashlib
+
 
 # =============================================================================
 # DATASET
@@ -29,8 +31,9 @@ class LidarS2Dataset(Dataset):
     """
 
     def __init__(self, lidar_dir, s2_dir, s2_means, s2_stds,
-                 context_k=1, randomize_context=True, split="train",
-                 augment=True, debug=False, target_s2_hw=(26, 26), ref_date="2024-04-26"):
+             context_k=1, randomize_context=True, augment=True,
+             debug=False, target_s2_hw=(256, 256), ref_date="2024-04-26",
+             split_pids=None, split="train"):
         super().__init__()
         self.lidar_dir = lidar_dir
         self.s2_dir = s2_dir
@@ -41,65 +44,35 @@ class LidarS2Dataset(Dataset):
         self.context_k = context_k
         self.randomize_context = randomize_context
         self.max_s2 = 6
+        self.ref_date = _dt.date.fromisoformat(str(ref_date)[:10])
         self.split = split
 
-        self.ref_date = _dt.date.fromisoformat(str(ref_date)[:10])
-        
-        # Load all lidar paths
-        self.lidar_paths = sorted(glob.glob(os.path.join(lidar_dir, "lidar_patch_*.tif")))
-        self.s2_group_dirs = {
-            os.path.basename(p).split(".")[0].split("_")[-1]: p
-            for p in glob.glob(os.path.join(s2_dir, "s2_patch_*")) if os.path.isdir(p)
-        }
-
-        # Conditionally load a subset of the data for debugging
-        if debug:
-            print("DEBUG MODE: Loading only 100 samples.")
-            lidar_paths_to_load = self.lidar_paths[:100]
+        # Load all patch paths based on the provided IDs
+        if split_pids is None:
+            all_lidar_paths = sorted(glob.glob(os.path.join(lidar_dir, "lidar_patch_*.tif")))
+            lidar_paths_to_load = all_lidar_paths
         else:
-            lidar_paths_to_load = self.lidar_paths
+            lidar_paths_to_load = [os.path.join(lidar_dir, f"lidar_patch_{pid}.tif") for pid in split_pids]
 
-        # Pre-load all data into memory
-        self.data_cache = []
-        for lidar_path in tqdm(lidar_paths_to_load, desc="Pre-loading dataset"):
+        if debug:
+            print("DEBUG MODE: Using a subset of 100 samples.")
+            lidar_paths_to_load = lidar_paths_to_load[:100]
+
+        # Store only the file paths and pids, not the data itself
+        self.samples = []
+        for lidar_path in lidar_paths_to_load:
             pid = self._extract_id(lidar_path)
             s2_group_dir = os.path.join(self.s2_dir, f"s2_patch_{pid}")
+            # Ensure all S2 files for the patch exist
             if all(os.path.exists(os.path.join(s2_group_dir, f"t{i}.tif")) for i in range(self.max_s2)):
-                with rasterio.open(lidar_path) as src:
-                    lidar_full = torch.from_numpy(src.read().astype(np.float32))
-                data = lidar_full[0:1].clamp(-1.0, 1.0)
-                mask = lidar_full[1]
-                
-                s2_patches = []
-                for i in range(self.max_s2):
-                    with rasterio.open(os.path.join(s2_group_dir, f"t{i}.tif")) as src:
-                        arr = torch.from_numpy(src.read()[:4].astype(np.float32))
-                    s2_patches.append(arr)
-                
-                all_attrs = self._parse_attrs_json(os.path.join(s2_group_dir, "attrs.json"))
-
-                self.data_cache.append({
-                    "lidar": data,
-                    "mask": mask,
-                    "s2_patches": s2_patches,
-                    "attrs": all_attrs,
+                self.samples.append({
+                    "lidar_path": lidar_path,
+                    "s2_group_dir": s2_group_dir,
                     "tile_id": pid
                 })
-        
-        # New: Pre-generate patch selections for the entire dataset
-        self.patch_selections = {}
-        for idx, sample in enumerate(self.data_cache):
-            tile_id = sample['tile_id']
-            # For deterministic evaluation, always use the first k patches
-            if not self.randomize_context:
-                chosen_ids = list(range(self.context_k))
-            # For randomized evaluation, select k random patches
-            else:
-                chosen_ids = sorted(random.sample(range(self.max_s2), self.context_k))
-            self.patch_selections[tile_id] = chosen_ids
-            
-        self.num_samples = len(self.data_cache)
-        print(f"Loaded {self.num_samples} matched LiDAR↔6×S2 groups into memory.")
+
+        self.num_samples = len(self.samples)
+        print(f"Prepared {self.num_samples} matched LiDAR↔6×S2 groups.")
 
     def _extract_id(self, path: str) -> str:
         return os.path.basename(path).split("_")[-1].split(".")[0]
@@ -142,15 +115,35 @@ class LidarS2Dataset(Dataset):
         return self.num_samples
 
     def __getitem__(self, idx: int) -> dict:
-        sample = self.data_cache[idx]
-        data = sample["lidar"]
-        mask = sample["mask"]
-        s2_patches_full = sample["s2_patches"]
-        all_attrs = sample["attrs"]
-        tile_id = sample["tile_id"]
+        sample_paths = self.samples[idx]
+        lidar_path = sample_paths["lidar_path"]
+        s2_group_dir = sample_paths["s2_group_dir"]
+        tile_id = sample_paths["tile_id"]
 
-        # Use the pre-generated selection from __init__
-        chosen_ids = self.patch_selections[tile_id]
+        # Load data from disk
+        with rasterio.open(lidar_path) as src:
+            lidar_full = torch.from_numpy(src.read().astype(np.float32))
+        data = lidar_full[0:1]
+        mask = lidar_full[1]
+
+        s2_patches_full = []
+        for i in range(self.max_s2):
+            with rasterio.open(os.path.join(s2_group_dir, f"t{i}.tif")) as src:
+                arr = torch.from_numpy(src.read()[:4].astype(np.float32))
+            s2_patches_full.append(arr)
+
+        all_attrs = self._parse_attrs_json(os.path.join(s2_group_dir, "attrs.json"))
+        
+        # S2 selection logic
+        if self.randomize_context:
+            if self.split == "train":
+                chosen_ids = sorted(random.sample(range(self.max_s2), self.context_k))
+            else:
+                seed = int(hashlib.sha1(tile_id.encode("utf-8")).hexdigest(), 16) % (2**32 - 1)
+                rng = random.Random(seed)
+                chosen_ids = sorted(rng.sample(range(self.max_s2), self.context_k))
+        else:
+            chosen_ids = list(range(self.context_k))
         
         s2_list = [s2_patches_full[i] for i in chosen_ids]
         attrs_list = [all_attrs[i] for i in chosen_ids]
@@ -162,14 +155,16 @@ class LidarS2Dataset(Dataset):
             s2_processed.append(arr)
         s2 = torch.cat(s2_processed, dim=0)
 
-        if self.s2_means.numel() == 4:
-            means = self.s2_means.repeat(self.context_k).view(-1,1,1)
-            stds  = self.s2_stds.repeat(self.context_k).view(-1,1,1)
-        else:
-            means = self.s2_means.view(-1,1,1)
-            stds  = self.s2_stds.view(-1,1,1)
-        s2 = (s2 - means) / (stds + 1e-6)
-        s2 = torch.clamp(s2 / 4, -1, 1)
+        # Gather means/stds for the CHOSEN patches
+        chosen_means = torch.cat([self.s2_means[i*4:(i+1)*4] for i in chosen_ids], dim=0)
+        chosen_stds = torch.cat([self.s2_stds[i*4:(i+1)*4] for i in chosen_ids], dim=0)
+        
+        # Reshape for broadcasting
+        means_reshaped = chosen_means.view(-1, 1, 1)
+        stds_reshaped = chosen_stds.view(-1, 1, 1)
+
+        # Normalize using means/stds calculated on training set only
+        s2 = (s2 - means_reshaped) / (stds_reshaped + 1e-6)
 
         attrs = torch.cat(attrs_list, dim=0)
 
@@ -189,5 +184,6 @@ class LidarS2Dataset(Dataset):
             "lidar": data.float(),
             "mask": mask.float(),
             "attrs": attrs.float(),
-            "chosen_ids": torch.tensor(chosen_ids, dtype=torch.long)
+            "chosen_ids": torch.tensor(chosen_ids, dtype=torch.long),
+            "tile_id": tile_id
         }

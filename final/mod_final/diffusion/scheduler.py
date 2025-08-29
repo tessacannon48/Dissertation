@@ -8,23 +8,48 @@ import math
 class LinearDiffusionScheduler:
     """Standard Linear DDPM diffusion scheduler."""
     
-    def __init__(self, timesteps=1000, beta_start=1e-4, beta_end=0.02, device='cuda'):
+    def __init__(self, timesteps=1000, beta_start=1e-4, beta_end=0.02, device='cuda', eps=1e-12):
         self.timesteps = timesteps
         self.device = device
-        self.betas = torch.linspace(beta_start, beta_end, timesteps).to(device)
+
+        self.betas = torch.linspace(beta_start, beta_end, timesteps, device=device)
         self.alphas = 1. - self.betas
         self.alpha_cumprod = torch.cumprod(self.alphas, dim=0)
-        self.sqrt_alpha_cumprod = torch.sqrt(self.alpha_cumprod)
-        self.sqrt_one_minus_alpha_cumprod = torch.sqrt(1 - self.alpha_cumprod)
+        self.sqrt_alpha_cumprod = torch.sqrt(self.alpha_cumprod.clamp(min=0.0, max=1.0))
+        self.sqrt_one_minus_alpha_cumprod = torch.sqrt((1 - self.alpha_cumprod).clamp(min=0.0, max=1.0))
+
+        # alpha_cumprod_prev is needed for the posterior mean calculation
+        self.alpha_cumprod_prev = torch.cat(
+            [torch.ones(1, device=device), self.alpha_cumprod[:-1]], dim=0
+        )
+
+        # Posterior mean coefficients
+        self.posterior_mean_coef1 = (
+            self.betas * torch.sqrt(self.alpha_cumprod_prev) / (1.0 - self.alpha_cumprod)
+        ).clamp(min=eps)
+
+        self.posterior_mean_coef2 = (
+            (1.0 - self.alpha_cumprod_prev) * torch.sqrt(self.alphas) / (1.0 - self.alpha_cumprod)
+        ).clamp(min=eps)
+
+        # Posterior variance and log variance
+        self.posterior_variance = (
+            self.betas * (1.0 - self.alpha_cumprod_prev) / (1.0 - self.alpha_cumprod)
+        ).clamp(min=1e-20)
+        
+        self.posterior_log_variance_clipped = torch.log(self.posterior_variance.clamp(min=1e-20))
 
     def q_sample(self, x_start, t, noise=None):
         """Forward diffusion process."""
-        if noise is None: 
+        if noise is None:
             noise = torch.randn_like(x_start)
-        sqrt_alpha = self.sqrt_alpha_cumprod[t].view(-1, 1, 1, 1)
-        sqrt_one_minus_alpha = self.sqrt_one_minus_alpha_cumprod[t].view(-1, 1, 1, 1)
-        return sqrt_alpha * x_start + sqrt_one_minus_alpha * noise
-
+        
+        # We need to reshape the alpha values to match the input tensor shape
+        sqrt_alpha_t = self.sqrt_alpha_cumprod[t].view(-1, 1, 1, 1)
+        sqrt_one_minus_alpha_t = self.sqrt_one_minus_alpha_cumprod[t].view(-1, 1, 1, 1)
+        
+        return sqrt_alpha_t * x_start + sqrt_one_minus_alpha_t * noise
+    
 class CosineDiffusionScheduler:
     """
     Cosine noise schedule (Nichol & Dhariwal, 2021 style).

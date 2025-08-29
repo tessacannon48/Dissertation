@@ -2,8 +2,8 @@
 
 # Data paths
 data:
-  s2_dir: "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/master_model/s2_patches_multi"
-  lidar_dir: "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/master_model/lidar_patches"
+  s2_dir: "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/final/s2_patches_multi"
+  lidar_dir: "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/final/lidar_patches"
 
 # Training parameters
 training:
@@ -12,9 +12,12 @@ training:
   lr: 0.0001
   timesteps: 1000
   noise_schedule: "linear"
-  num_workers: 4
+  num_workers: 16
   context_k: 1
   randomize_context: false
+  loss:
+    name: "masked_mse_loss"  
+    alpha: 0.1 
 
 # Model parameters
 model:
@@ -22,6 +25,7 @@ model:
   base_channels: 128
   embed_dim: 256
   attention_variant: "default"
+  
 
 # Logging and saving
 logging:
@@ -37,12 +41,6 @@ evaluation:
     - ddpm
   evaluate: false
   eval_index_json: "fixed_eval.json"
-
-# Diffusion parameters
-diffusion:
-  sigma_data: 0.5
-  sigma_min: 0.002
-  sigma_max: 80.0
 
 # System settings
 system:

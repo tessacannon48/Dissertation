@@ -15,8 +15,9 @@ class ConditionalUNet(nn.Module):
         self.embed_dim = embed_dim
         self.depth = unet_depth
         self.attention_variant = attention_variant
+        self.base_channels = base_channels
 
-        # time + attributes → single conditioning vector
+        # Time + attributes -> single conditioning vector
         self.time_mlp = nn.Sequential(
             nn.Linear(embed_dim, embed_dim),
             nn.SiLU(),
@@ -33,14 +34,10 @@ class ConditionalUNet(nn.Module):
 
         # ========== Build U-Net dynamically ==========
 
-        # Input conv
+        # Input convolution block
         self.input_conv = DoubleConv(in_channels + cond_channels, base_channels, embed_dim)
 
-        # Track channel sizes for skip connections
-        self.skip_channels = [base_channels]
-
-        # Encoder
-        self.skip_channels = [base_channels]
+        # Encoder path with downsampling blocks
         self.downs = nn.ModuleList()
         in_ch = base_channels
         for i in range(unet_depth):
@@ -48,25 +45,34 @@ class ConditionalUNet(nn.Module):
             out_ch = min(in_ch * 2, max_channels)
             use_attn = self._use_attention(i, stage='down', depth=unet_depth)
             self.downs.append(Down(in_ch, out_ch, embed_dim, use_attention=use_attn))
-            self.skip_channels.append(out_ch)
             in_ch = out_ch
 
-        # Bottleneck
+        # Bottleneck convolution block
         self.bottleneck_conv = DoubleConv(in_ch, in_ch, embed_dim, use_attention=True)
 
-        # Decoder path
+        # Decoder path with upsampling blocks
         self.ups = nn.ModuleList()
         for i in range(unet_depth):
             in_ch_prev = in_ch
             # The input channels to the Up block are the output of the previous layer
-            skip_ch = self.skip_channels[-(i + 2)]  # Match encoder skip
-            out_ch = skip_ch  # Output channels are the same as the skip channels
+            # plus the channels from the corresponding skip connection from the encoder
+            skip_ch = self._get_skip_channels(unet_depth, i)
+            out_ch = skip_ch
             use_attn = self._use_attention(i, stage='up', depth=unet_depth)
             self.ups.append(Up(in_channels=in_ch_prev, skip_channels=skip_ch, out_channels=out_ch, embed_dim=embed_dim, use_attention=use_attn))
             in_ch = out_ch
 
-        # Final output
+        # Final output convolution
         self.output_conv = nn.Conv2d(in_ch, in_channels, 1)
+
+    def _get_skip_channels(self, depth, current_up_idx):
+        """Helper to compute skip connection channels dynamically."""
+        channels = [self.base_channels]
+        for i in range(depth):
+            max_channels = self.base_channels * 8
+            out_ch = min(channels[-1] * 2, max_channels)
+            channels.append(out_ch)
+        return channels[-(current_up_idx + 2)]
 
     def _use_attention(self, idx, stage, depth):
         """Determine whether to use attention based on variant and layer idx."""
@@ -75,24 +81,28 @@ class ConditionalUNet(nn.Module):
         elif self.attention_variant == 'all':
             return True
         elif self.attention_variant == 'mid':
-            return idx == (depth // 2)
+            # Applies attention to the two innermost encoder/decoder layers
+            if stage == 'down' and idx == depth - 1:
+                return True
+            if stage == 'up' and idx == 0:
+                return True
+            return False
         elif self.attention_variant == 'default':
             return False
-            # mimic original setup (attn in down1/down2/up1/up2)
-            #if stage == 'down' and idx in [0, 1]:
-                #return True
-            #if stage == 'up' and idx in [depth - 2, depth - 1]:
-                #return True
-            #return False
-        else:
-            return False
-
+        
     def forward(self, x, cond_img, attrs, t):
-        # Ensure conditioning S2 patch matches LiDAR size
-        if cond_img.shape[-2:] != x.shape[-2:]:
-            cond_img = F.interpolate(cond_img, size=x.shape[-2:], mode='bilinear', align_corners=False)
+        """
+        The forward pass of the U-Net.
 
-        # Time and attribute embedding
+        Args:
+            x (torch.Tensor): The input noisy image (lidar RANSAC residuals). Shape: [B, 1, H, W]
+            cond_img (torch.Tensor): The conditional Sentinel-2 image patches. Shape: [B, k*4, Hc, Wc]
+            attrs (torch.Tensor): The attributes (metadata) for the S2 patches. Shape: [B, k*8]
+            t (torch.Tensor): The timestep for the diffusion process. Shape: [B]
+        """
+        # 1. Embed time and attributes into a conditioning vector 
+        # The timestep and attribute information are processed by MLPs to create a dense
+        # vector that the U-Net can use as a conditioning signal at each layer.
         t_emb = self.time_mlp(timestep_embedding(t, self.embed_dim))
         if self.attr_mlp is not None:
             a_emb = self.attr_mlp(attrs)
@@ -100,23 +110,32 @@ class ConditionalUNet(nn.Module):
         else:
             cond_vec = t_emb
 
-        # Combine input and condition
+        # 2. Combine the noisy image with the conditional images
+        # The S2 images are concatenated directly with the noisy input.
+        # This provides the UNet with pixel-level conditioning information.
         x = torch.cat([x, cond_img], dim=1)
 
-        # Encoder
+        # 3. Encoder Path: Downsample and store skip connections
+        # The network processes the input through a series of Down blocks. Each Down
+        # block halves the spatial resolution and doubles the channels. A copy
+        # of the feature map is saved at each level for the decoder.
         skips = []
         x = self.input_conv(x, cond_vec)
-        skips = []
         for down in self.downs:
             skips.append(x)
             x = down(x, cond_vec)
 
-        # Bottleneck
+        # 4. Bottleneck
+        # The innermost layer processes the most compressed representation of the data.
         x = self.bottleneck_conv(x, cond_vec)
 
-        # Decoder
+        # 5. Decoder Path: Upsample and concatenate skip connections
+        # The network reverses the process, upsampling the feature maps and
+        # combining them with the saved skip connections from the encoder.
         for up in self.ups:
             skip = skips.pop()
             x = up(x, skip, cond_vec)
 
+        # 6. Final Output
+        # The final convolution maps the feature maps back to the original channel size (1).
         return self.output_conv(x)

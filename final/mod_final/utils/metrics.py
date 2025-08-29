@@ -30,23 +30,55 @@ def compute_topographic_rmse(gt, pred):
     dy_rmse = F.mse_loss(pred_dy, gt_dy).sqrt()
     return (dx_rmse + dy_rmse) / 2
 
-def compute_nrmse(gt, pred):
-    """Compute normalized RMSE as percentage."""
-    mse = np.mean((gt - pred) ** 2)
-    rmse = np.sqrt(mse)
-    gt_range = np.max(gt) - np.min(gt)
-    return (rmse / gt_range) * 100 if gt_range > 0 else 0
-
-def timestep_embedding(timesteps, dim):
-    """Create sinusoidal timestep embeddings."""
-    device = timesteps.device
-    half_dim = dim // 2
-    emb = torch.log(torch.tensor(10000.0)) / (half_dim - 1)
-    emb = torch.exp(torch.arange(half_dim, device=device) * -emb)
-    emb = timesteps[:, None].float() * emb[None, :]
-    emb = torch.cat([torch.sin(emb), torch.cos(emb)], dim=1)
-    return F.pad(emb, (0, 1, 0, 0)) if dim % 2 else emb
-
 def masked_mse_loss(pred, target, mask):
     """Calculate MSE loss with mask weighting."""
     return ((pred - target) ** 2 * mask.unsqueeze(1)).sum() / mask.sum()
+
+
+def masked_mae_loss(pred, target, mask):
+    """Calculate MAE loss with mask weighting."""
+    return (torch.abs(pred - target) * mask.unsqueeze(1)).sum() / mask.sum()
+
+def masked_hybrid_mse_loss(pred, target, mask, alpha=0.1):
+    """
+    Calculate hybrid MSE + gradient loss.
+    Returns: total_loss, pixel_loss, gradient_loss
+    """
+    # Pixel-wise MSE loss
+    pixel_loss = masked_mse_loss(pred, target, mask)
+
+    # Gradient loss (MSE of the gradients)
+    gt_dx = target[:, :, :, 1:] - target[:, :, :, :-1]
+    pred_dx = pred[:, :, :, 1:] - pred[:, :, :, :-1]
+    grad_loss_x = F.mse_loss(pred_dx, gt_dx)
+
+    gt_dy = target[:, :, 1:, :] - target[:, :, :-1, :]
+    pred_dy = pred[:, :, 1:, :] - pred[:, :, :-1, :]
+    grad_loss_y = F.mse_loss(pred_dy, gt_dy)
+    
+    gradient_loss = (grad_loss_x + grad_loss_y) / 2
+    
+    total_loss = pixel_loss + alpha * gradient_loss
+    return total_loss, pixel_loss, gradient_loss
+
+def masked_hybrid_mae_loss(pred, target, mask, alpha=0.1):
+    """
+    Calculate hybrid MAE + gradient loss.
+    Returns: total_loss, pixel_loss, gradient_loss
+    """
+    # Pixel-wise MAE loss
+    pixel_loss = masked_mae_loss(pred, target, mask)
+
+    # Gradient loss (L1 loss of the gradients)
+    gt_dx = target[:, :, :, 1:] - target[:, :, :, :-1]
+    pred_dx = pred[:, :, :, 1:] - pred[:, :, :, :-1]
+    grad_loss_x = F.l1_loss(pred_dx, gt_dx)
+
+    gt_dy = target[:, :, 1:, :] - target[:, :, :-1, :]
+    pred_dy = pred[:, :, 1:, :] - pred[:, :, :-1, :]
+    grad_loss_y = F.l1_loss(pred_dy, gt_dy)
+    
+    gradient_loss = (grad_loss_x + grad_loss_y) / 2
+
+    total_loss = pixel_loss + alpha * gradient_loss
+    return total_loss, pixel_loss, gradient_loss

@@ -37,6 +37,11 @@ def parse_arguments():
     parser.add_argument('--num_workers', type=int, help='Override for number of data loader workers')
     parser.add_argument('--context_k', type=int, help='Override for number of S2 patches to condition on')
     parser.add_argument('--randomize_context', action='store_true', help='Override to randomly sample S2 context during training')
+
+    # Loss function options
+    parser.add_argument('--loss_name', type=str, choices=['masked_mse_loss', 'masked_mae_loss', 'masked_hybrid_mse_loss', 'masked_hybrid_mae_loss'],
+                        help='Override for the loss function name')
+    parser.add_argument('--loss_alpha', type=float, help='Override for the alpha weighting of hybrid losses')
     
     # Logging and saving
     parser.add_argument('--wandb_project', type=str, help='Override for Weights & Biases project name')

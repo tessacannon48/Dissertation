@@ -28,31 +28,49 @@ class SelfAttention2D(nn.Module):
         return self.proj(out + x)
 
 class DoubleConv(nn.Module):
-    """Double conv with *conditioning* embedding (time + attrs combined)."""
+    """Double conv with FiLM (AdaGN) from a conditioning vector."""
     def __init__(self, in_channels, out_channels, embed_dim, use_attention=False):
         super().__init__()
-        self.double_conv = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, 3, padding=1),
-            nn.GroupNorm(8, out_channels),
-            nn.GELU(),
-            nn.Conv2d(out_channels, out_channels, 3, padding=1),
-            nn.GroupNorm(8, out_channels),
-            nn.GELU(),
-        )
+        # conv1 -> GN -> FiLM -> GELU -> conv2 -> GN -> FiLM -> GELU
+        self.conv1 = nn.Conv2d(in_channels, out_channels, 3, padding=1)
+        self.gn1   = nn.GroupNorm(num_groups=8, num_channels=out_channels, affine=False)
+
+        self.conv2 = nn.Conv2d(out_channels, out_channels, 3, padding=1)
+        self.gn2   = nn.GroupNorm(num_groups=8, num_channels=out_channels, affine=False)
+
+        # FiLM: produce gamma, beta for both norms at once (2 layers × C each)
         self.cond_embed = nn.Sequential(
-            nn.Linear(embed_dim, out_channels),
-            nn.GELU(),
-            nn.Linear(out_channels, out_channels)
+            nn.Linear(embed_dim, 2 * 2 * out_channels),  # [γ1, β1, γ2, β2]
         )
-        if use_attention:
-            self.attn = SelfAttention2D(out_channels)
-        else:
-            self.attn = None
+        with torch.no_grad():
+            for m in self.cond_embed.modules():
+                if isinstance(m, nn.Linear):
+                    nn.init.zeros_(m.weight); nn.init.zeros_(m.bias)
+
+        self.act = nn.GELU()
+        self.attn = SelfAttention2D(out_channels) if use_attention else None
+
+    def _film(self, h, gamma, beta):
+        # h: [B,C,H,W], gamma/beta: [B,C]
+        gamma = gamma.view(h.size(0), -1, 1, 1)
+        beta  = beta.view(h.size(0), -1, 1, 1)
+        return (1.0 + gamma) * h + beta
 
     def forward(self, x, cond_vec):
-        h = self.double_conv(x)
-        c = self.cond_embed(cond_vec).view(cond_vec.size(0), -1, 1, 1)
-        h = h + c
+        B = cond_vec.size(0)
+        gb = self.cond_embed(cond_vec)                          # [B, 4C]
+        gamma1, beta1, gamma2, beta2 = torch.chunk(gb, 4, dim=1)
+
+        h = self.conv1(x)
+        h = self.gn1(h)
+        h = self._film(h, gamma1, beta1)
+        h = self.act(h)
+
+        h = self.conv2(h)
+        h = self.gn2(h)
+        h = self._film(h, gamma2, beta2)
+        h = self.act(h)
+
         if self.attn is not None:
             h = self.attn(h)
         return h
@@ -69,9 +87,7 @@ class Down(nn.Module):
 class Up(nn.Module):
     def __init__(self, in_channels, skip_channels, out_channels, embed_dim, use_attention=False):
         super().__init__()
-        # The ConvTranspose2d should halve the input channels
         self.up = nn.ConvTranspose2d(in_channels, in_channels // 2, kernel_size=2, stride=2)
-        # The DoubleConv should take the concatenated channels
         self.conv = DoubleConv(in_channels // 2 + skip_channels, out_channels, embed_dim, use_attention)
 
     def forward(self, x1, x2, cond_vec):
