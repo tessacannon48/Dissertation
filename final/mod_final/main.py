@@ -185,7 +185,7 @@ def train_model(config):
     # --- Early Stopping Variables ---
     best_val_loss = float('inf')
     patience_counter = 0
-    patience = 10 # Wait for 10 epochs with no improvement
+    patience = 200 # Wait for 10 epochs with no improvement
     max_epochs = config["training"]["epochs"]
     # --------------------------------
 
@@ -195,7 +195,7 @@ def train_model(config):
     # Initialize a list to store epoch durations
     epoch_durations = []
 
-    # Training loop
+# Training loop
     for epoch in range(max_epochs): 
         
         model.train()
@@ -260,13 +260,13 @@ def train_model(config):
                 
                 # Select loss function with or without alpha
                 if 'hybrid' in loss_name:
-                    batch_val_loss = criterion(pred, lidar, mask, alpha=loss_alpha)
-                    pixel_val_component = loss_functions[f"masked_{'mse' if 'mse' in loss_name else 'mae'}_loss"](pred, lidar, mask)
-                    gradient_val_component = (batch_val_loss - pixel_val_component) / loss_alpha
+                    batch_val_loss, pixel_val_component, gradient_val_component = criterion(pred, lidar, mask, alpha=loss_alpha)
                     total_val_pixel_loss += pixel_val_component.item()
                     total_val_gradient_loss += gradient_val_component.item()
                 else:
                     batch_val_loss = criterion(pred, lidar, mask)
+                    pixel_val_component = batch_val_loss
+                    gradient_val_component = torch.tensor(0.0)
                 
                 total_val_loss += batch_val_loss.item()
 
