@@ -23,3 +23,6 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+
+# Ignore old files
+old_stuff/
