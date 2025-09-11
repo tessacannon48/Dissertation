@@ -2,8 +2,8 @@
 
 # Data paths
 data:
-  s2_dir: "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/final/s2_patches_multi"
-  lidar_dir: "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/final/lidar_patches"
+  s2_dir: "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/input_data/s2_patches"
+  lidar_dir: "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/input_data/lidar_patches"
 
 # Training parameters
 training:
@@ -32,8 +32,8 @@ logging:
   wandb_project: "final_dissertation"
   wandb_name: null
   run_name: "default_run"
-  save_dir: "./models"
-  output_dir: "./reconstructions"
+  save_dir: "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/models"
+  output_dir: "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/reconstructions"
 
 # Sampling and evaluation
 evaluation:

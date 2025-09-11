@@ -1,4 +1,4 @@
-# test.py
+# experiment_2.py
 
 # Import packages
 import torch
@@ -10,16 +10,19 @@ import glob
 from torch.utils.data import DataLoader
 from torch.utils.data import Subset
 import wandb 
-
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
-# Import modules from your library
+# Import modules 
 from src.utils.argparse import parse_arguments
 from src.data.dataset import LidarS2Dataset
 from src.data.processing import compute_s2_mean_std_multi
 from src.model.unet import ConditionalUNet
 from src.diffusion.scheduler import LinearDiffusionScheduler, CosineDiffusionScheduler
 from scripts.main import run_reconstruction_evaluation, set_seed, train_model
+
+# =============================================================================
+# SAMPLING EXPERIMENT
+# =============================================================================
 
 def run_sampling_experiment(config):
     """
@@ -119,6 +122,10 @@ def run_sampling_experiment(config):
 
     # Run the reconstruction evaluation function from main.py
     run_reconstruction_evaluation(model, val_dataset, config, scheduler)
+
+# =============================================================================
+# MAIN EXECUTION
+# =============================================================================
 
 if __name__ == "__main__":
     # Set global seed for reproducibility
