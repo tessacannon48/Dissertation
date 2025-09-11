@@ -21,13 +21,13 @@ import rasterio
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
 # Import modules
-from utils.argparse import parse_arguments
-from data.dataset import LidarS2Dataset
-from data.processing import compute_s2_mean_std_multi
-from models.unet import ConditionalUNet
-from diffusion.scheduler import LinearDiffusionScheduler, CosineDiffusionScheduler
-from diffusion.sampling import p_sample_loop_ddpm, p_sample_loop_ddim, p_sample_loop_plms
-from utils.metrics import compute_topographic_rmse, normalize_batch, masked_mse_loss, masked_mae_loss, masked_hybrid_mse_loss, masked_hybrid_mae_loss
+from src.utils.argparse import parse_arguments
+from src.data.dataset import LidarS2Dataset
+from src.data.processing import compute_s2_mean_std_multi
+from src.model.unet import ConditionalUNet
+from src.diffusion.scheduler import LinearDiffusionScheduler, CosineDiffusionScheduler
+from src.diffusion.sampling import p_sample_loop_ddpm, p_sample_loop_ddim, p_sample_loop_plms
+from src.utils.metrics import compute_topographic_rmse, normalize_batch, masked_mse_loss, masked_mae_loss, masked_hybrid_mse_loss, masked_hybrid_mae_loss
 
 # =============================================================================
 # TRAINING FUNCTION

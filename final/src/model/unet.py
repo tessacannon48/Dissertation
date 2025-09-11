@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from models.blocks import DoubleConv, Down, Up, SelfAttention2D
+from model.blocks import DoubleConv, Down, Up, SelfAttention2D
 from diffusion.utils import timestep_embedding
 
 # =============================================================================
@@ -75,19 +75,51 @@ class ConditionalUNet(nn.Module):
         return channels[-(current_up_idx + 2)]
 
     def _use_attention(self, idx, stage, depth):
-        """Determine whether to use attention based on variant and layer idx."""
+        """Return True if attention should be used for this block.
+
+        Args:
+            idx   : 0-based index of the block within its stage (near-bottleneck blocks have
+                    idx==depth-1 for 'down' and idx==0 for 'up').
+            stage : 'down' for encoder, 'up' for decoder.
+            depth : number of encoder/decoder blocks per stage (excluding the bottleneck).
+
+        Variants:
+            - 'none'   : no attention.
+            - 'all'    : attention on every block.
+            - 'mid'    : attention on the single innermost encoder & decoder blocks.
+            - 'heavy'  : like 'mid' but one additional adjacent block on each side:
+                        encoder idx in {depth-2, depth-1}, decoder idx in {0, 1}.
+        """
         if self.attention_variant == 'none':
             return False
         elif self.attention_variant == 'all':
             return True
         elif self.attention_variant == 'mid':
-            # Applies attention to the two innermost encoder/decoder layers
             if stage == 'down' and idx == depth - 1:
                 return True
             if stage == 'up' and idx == 0:
                 return True
             return False
+        elif self.attention_variant == 'heavy':
+            # If we have at least two blocks per stage, enable attention on the two
+            # innermost blocks in each stage. Otherwise, fall back to 'mid'.
+            if depth >= 2:
+                if stage == 'down' and idx >= depth - 2:  # {depth-2, depth-1}
+                    return True
+                if stage == 'up' and idx <= 1:            # {0, 1}
+                    return True
+                return False
+            else:
+                # Fallback to 'mid' when there's only one block.
+                if stage == 'down' and idx == depth - 1:
+                    return True
+                if stage == 'up' and idx == 0:
+                    return True
+                return False
         elif self.attention_variant == 'default':
+            return False
+        else:
+            # Unknown variant: be conservative.
             return False
         
     def forward(self, x, cond_img, attrs, t):

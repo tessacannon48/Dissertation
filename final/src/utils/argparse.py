@@ -30,7 +30,7 @@ def parse_arguments():
     parser.add_argument("--unet_depth", type=int, help='Override for UNet depth')
     parser.add_argument('--base_channels', type=int, help='Override for base channels')
     parser.add_argument('--embed_dim', type=int, help='Override for embedding dimension')
-    parser.add_argument('--attention_variant', type=str, choices=['default', 'none', 'mid', 'all'], 
+    parser.add_argument('--attention_variant', type=str, choices=['default', 'none', 'mid', 'heavy', 'all'], 
                         help='Override for UNet attention config')
 
     # Training options
@@ -55,6 +55,7 @@ def parse_arguments():
                         help='Override for sampling methods to use for reconstruction')
     parser.add_argument('--evaluate', action='store_true', help='Override to run reconstruction evaluation after training')
     parser.add_argument("--eval_index_json", type=str, help='Override for evaluation index JSON file')
+    parser.add_argument('--pretrained_model_path', type=str, help='Path to a pre-trained model .pth file for evaluation.')
     
     # Device
     parser.add_argument('--device', type=str, help='Override for device (cuda/cpu/auto)')

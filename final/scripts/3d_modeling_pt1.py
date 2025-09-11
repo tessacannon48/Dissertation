@@ -29,13 +29,13 @@ from rasterio.warp import reproject, Resampling
 
 # Project imports 
 
-from data.dataset import LidarS2Dataset
-from models.unet import ConditionalUNet
-from diffusion.scheduler import LinearDiffusionScheduler, CosineDiffusionScheduler
-from diffusion.sampling import p_sample_loop_ddpm, p_sample_loop_ddim, p_sample_loop_plms
+from src.data.dataset import LidarS2Dataset
+from src.model.unet import ConditionalUNet
+from src.diffusion.scheduler import LinearDiffusionScheduler, CosineDiffusionScheduler
+from src.diffusion.sampling import p_sample_loop_ddpm, p_sample_loop_ddim, p_sample_loop_plms
 
 
-# Your utility helpers (load_checkpoint, find_stats_file, etc.) go here.
+# Utility helpers (load_checkpoint, find_stats_file, etc.) 
 def load_checkpoint(ckpt_path, device):
     ckpt = torch.load(ckpt_path, map_location=device)
     cfg = ckpt.get("config", None)

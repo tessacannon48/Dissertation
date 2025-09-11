@@ -14,12 +14,12 @@ import wandb
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
 # Import modules from your library
-from utils.argparse import parse_arguments
-from data.dataset import LidarS2Dataset
-from data.processing import compute_s2_mean_std_multi
-from models.unet import ConditionalUNet
-from diffusion.scheduler import LinearDiffusionScheduler, CosineDiffusionScheduler
-from main import run_reconstruction_evaluation, set_seed, train_model
+from src.utils.argparse import parse_arguments
+from src.data.dataset import LidarS2Dataset
+from src.data.processing import compute_s2_mean_std_multi
+from src.model.unet import ConditionalUNet
+from src.diffusion.scheduler import LinearDiffusionScheduler, CosineDiffusionScheduler
+from scripts.main import run_reconstruction_evaluation, set_seed, train_model
 
 def run_sampling_experiment(config):
     """
