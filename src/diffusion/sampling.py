@@ -10,15 +10,14 @@ def p_sample_loop_ddpm(model, scheduler, shape, cond, attrs, device):
     for t in reversed(range(scheduler.timesteps)):
         t_batch = torch.full((x.size(0),), t, device=device, dtype=torch.long)
         
-        # 1. Model predicts the clean image (x_0)
+        # Model predicts the clean image (x_0)
         pred_x0 = model(x, cond, attrs, t_batch)
         
-        # 2. Get the posterior mean and variance from the scheduler
-        # Assuming the scheduler has pre-computed these values
+        # Get the posterior mean and variance from the scheduler
         mean = (scheduler.posterior_mean_coef1[t] * pred_x0 +
                 scheduler.posterior_mean_coef2[t] * x)
         
-        # 3. Sample from the posterior distribution
+        # Sample from the posterior distribution
         if t > 0:
             noise = torch.randn_like(x)
             var = scheduler.posterior_variance[t]
@@ -41,7 +40,7 @@ def p_sample_loop_ddim(model, scheduler, shape, cond, attrs, device, eta=0.0):
     for i, t in enumerate(timesteps):
         t_batch = torch.full((x.size(0),), t, device=device, dtype=torch.long)
         
-        # Predict the clean input x_0 (assuming your model is trained for this)
+        # Predict the clean input x_0 
         pred_x0 = model(x, cond, attrs, t_batch)
 
         # Get the alphas for current and previous timesteps from the scheduler
@@ -93,10 +92,10 @@ def p_sample_loop_plms(model, scheduler, shape, cond, attrs, device, order=4):
         alpha_cumprod_t = scheduler.alpha_cumprod[t]
         alpha_cumprod_prev_t = scheduler.alpha_cumprod_prev[t]
 
-        # 1. Predict the clean image (x_0)
+        # Predict the clean image (x_0)
         pred_x0 = model(x, cond, attrs, t_batch)
 
-        # 2. Convert x_0 prediction to noise prediction (epsilon)
+        # Convert x_0 prediction to noise prediction (epsilon)
         pred_epsilon = (x - torch.sqrt(alpha_cumprod_t) * pred_x0) / torch.sqrt(1 - alpha_cumprod_t)
         
         # Add the current epsilon to the history
@@ -106,7 +105,7 @@ def p_sample_loop_plms(model, scheduler, shape, cond, attrs, device, order=4):
         if len(prev_eps) > order:
             prev_eps = prev_eps[-order:]
 
-        # 3. Calculate PLMS-corrected epsilon based on history
+        # Calculate PLMS-corrected epsilon based on history
         if len(prev_eps) == 1:
             eps = pred_epsilon
         elif len(prev_eps) == 2:
@@ -116,8 +115,7 @@ def p_sample_loop_plms(model, scheduler, shape, cond, attrs, device, order=4):
         else:
             eps = (55/24) * prev_eps[-1] - (59/24) * prev_eps[-2] + (37/24) * prev_eps[-3] - (9/24) * prev_eps[-4]
         
-        # 4. Calculate the next sample using the PLMS update formula
-        # PLMS is an ODE solver, so we update the sample based on the predicted derivative (epsilon)
+        # Calculate the next sample using the PLMS update formula
         x0_part = torch.sqrt(alpha_cumprod_prev_t) * pred_x0
         dir_xt  = torch.sqrt(1 - alpha_cumprod_prev_t) * eps
 

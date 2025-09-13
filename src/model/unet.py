@@ -32,7 +32,7 @@ class ConditionalUNet(nn.Module):
         else:
             self.attr_mlp = None
 
-        # ========== Build U-Net dynamically ==========
+        # Build U-Net dynamically
 
         # Input convolution block
         self.input_conv = DoubleConv(in_channels + cond_channels, base_channels, embed_dim)
@@ -54,8 +54,7 @@ class ConditionalUNet(nn.Module):
         self.ups = nn.ModuleList()
         for i in range(unet_depth):
             in_ch_prev = in_ch
-            # The input channels to the Up block are the output of the previous layer
-            # plus the channels from the corresponding skip connection from the encoder
+            # The input channels to the Up block are the output of the previous layer plus the channels from the corresponding skip connection from the encoder
             skip_ch = self._get_skip_channels(unet_depth, i)
             out_ch = skip_ch
             use_attn = self._use_attention(i, stage='up', depth=unet_depth)
@@ -101,16 +100,14 @@ class ConditionalUNet(nn.Module):
                 return True
             return False
         elif self.attention_variant == 'heavy':
-            # If we have at least two blocks per stage, enable attention on the two
-            # innermost blocks in each stage. Otherwise, fall back to 'mid'.
             if depth >= 2:
-                if stage == 'down' and idx >= depth - 2:  # {depth-2, depth-1}
+                if stage == 'down' and idx >= depth - 2:  
                     return True
-                if stage == 'up' and idx <= 1:            # {0, 1}
+                if stage == 'up' and idx <= 1:            
                     return True
                 return False
             else:
-                # Fallback to 'mid' when there's only one block.
+                # Fallback to 'mid' when there's only one block
                 if stage == 'down' and idx == depth - 1:
                     return True
                 if stage == 'up' and idx == 0:
@@ -119,7 +116,6 @@ class ConditionalUNet(nn.Module):
         elif self.attention_variant == 'default':
             return False
         else:
-            # Unknown variant: be conservative.
             return False
         
     def forward(self, x, cond_img, attrs, t):

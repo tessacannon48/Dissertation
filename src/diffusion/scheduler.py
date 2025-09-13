@@ -17,8 +17,6 @@ class LinearDiffusionScheduler:
         self.alpha_cumprod = torch.cumprod(self.alphas, dim=0)
         self.sqrt_alpha_cumprod = torch.sqrt(self.alpha_cumprod.clamp(min=0.0, max=1.0))
         self.sqrt_one_minus_alpha_cumprod = torch.sqrt((1 - self.alpha_cumprod).clamp(min=0.0, max=1.0))
-
-        # alpha_cumprod_prev is needed for the posterior mean calculation
         self.alpha_cumprod_prev = torch.cat(
             [torch.ones(1, device=device), self.alpha_cumprod[:-1]], dim=0
         )
@@ -44,7 +42,7 @@ class LinearDiffusionScheduler:
         if noise is None:
             noise = torch.randn_like(x_start)
         
-        # We need to reshape the alpha values to match the input tensor shape
+        # Reshape the alpha values to match the input tensor shape
         sqrt_alpha_t = self.sqrt_alpha_cumprod[t].view(-1, 1, 1, 1)
         sqrt_one_minus_alpha_t = self.sqrt_one_minus_alpha_cumprod[t].view(-1, 1, 1, 1)
         
@@ -63,20 +61,20 @@ class CosineDiffusionScheduler:
         # Build alpha_bar (cumprod) with cosine schedule
         steps = torch.arange(timesteps + 1, dtype=torch.float32)
         f = torch.cos(((steps / timesteps + s) / (1 + s)) * math.pi * 0.5) ** 2
-        alpha_bar = f / f[0]  # normalize so alpha_bar[0] = 1
+        alpha_bar = f / f[0]  
 
         # Convert alpha_bar -> per-step betas
         alpha_bar = alpha_bar.to(device)
-        alpha_bar_t   = alpha_bar[1:]                      # t = 1..T
-        alpha_bar_t_1 = alpha_bar[:-1].clamp(min=eps)      # t-1 = 0..T-1
+        alpha_bar_t   = alpha_bar[1:]                     
+        alpha_bar_t_1 = alpha_bar[:-1].clamp(min=eps)      
 
-        betas = (1.0 - (alpha_bar_t / alpha_bar_t_1)).clamp(1e-8, 0.999)  # [T]
+        betas = (1.0 - (alpha_bar_t / alpha_bar_t_1)).clamp(1e-8, 0.999)  
         alphas = (1.0 - betas).clamp(min=eps)
 
-        # Store canonical buffers (match fields used elsewhere)
+        # Store canonical buffers 
         self.betas = betas
         self.alphas = alphas
-        self.alpha_cumprod = torch.cumprod(alphas, dim=0)                 # == alpha_bar[1:]
+        self.alpha_cumprod = torch.cumprod(alphas, dim=0)                 
         self.alpha_cumprod_prev = torch.cat(
             [torch.ones(1, device=device), self.alpha_cumprod[:-1]], dim=0
         )

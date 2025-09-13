@@ -27,15 +27,14 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 from rasterio.warp import reproject, Resampling
 
-# Project imports 
-
+# Import modules
 from src.data.dataset import LidarS2Dataset
 from src.model.unet import ConditionalUNet
 from src.diffusion.scheduler import LinearDiffusionScheduler, CosineDiffusionScheduler
 from src.diffusion.sampling import p_sample_loop_ddpm, p_sample_loop_ddim, p_sample_loop_plms
 
 
-# Utility helpers (load_checkpoint, find_stats_file, etc.) 
+# Utility helpers
 def load_checkpoint(ckpt_path, device):
     ckpt = torch.load(ckpt_path, map_location=device)
     cfg = ckpt.get("config", None)
@@ -177,7 +176,7 @@ def plot_all_three_3d_surfaces(gt_array, pred_array, diff_array, step=4, out_pat
     surface2 = plot_single_3d_surface(ax2, pr_s, title="Predicted LiDAR Elevation", cmap='terrain', z_label='Elevation (m)')
     fig.colorbar(surface2, ax=ax2, shrink=0.5, aspect=5, label='Elevation (m)')
 
-    # Plot 3: Difference (Error Map)
+    # Plot 3: Difference 
     ax3 = fig.add_subplot(1, 3, 3, projection='3d')
     surface3 = plot_single_3d_surface(ax3, diff_s, title="Prediction - Ground Truth (Error)", cmap='RdBu', z_label='Difference (m)')
     fig.colorbar(surface3, ax=ax3, shrink=0.5, aspect=5, label='Difference (m)')
@@ -189,9 +188,7 @@ def plot_all_three_3d_surfaces(gt_array, pred_array, diff_array, step=4, out_pat
     plt.show()
 
 
-# --------------------------
-# Core: batch predict tiles then mosaic + 3D
-# --------------------------
+# Core function for prediction and plotting
 @torch.no_grad()
 def predict_and_plot_all_maps(
     ckpt_path, config_yaml, out_dir,
@@ -304,7 +301,7 @@ def predict_and_plot_all_maps(
             out_tif = os.path.join(pred_tiles_dir, f"pred_{tile_id}.tif")
             write_tif_like(gt_lidar_tif, out_tif, pred[i, 0])
             pred_tifs.append(out_tif)
-            gt_tifs.append(gt_lidar_tif) # Collect GT tifs again
+            gt_tifs.append(gt_lidar_tif)
 
     elapsed = time.perf_counter() - start
     print(f"\nFinished per-tile predictions for {len(pred_tifs)} tiles in {elapsed / 60:.1f} min.")
@@ -359,7 +356,6 @@ def predict_and_plot_all_maps(
     }
 
 # Execution
-# --------------------------
 results = predict_and_plot_all_maps(
     ckpt_path='/cs/student/projects2/aisd/2024/tcannon/dissertation/models/final_improved_baseline_k1_att_best.pth',
     config_yaml=None,

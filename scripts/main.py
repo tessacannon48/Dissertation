@@ -73,7 +73,7 @@ def train_model(config):
     loss_name = config['training']['loss']['name']
     loss_alpha = config['training']['loss']['alpha']
     
-    # Select the loss function to use
+    # Select the loss function
     criterion = loss_functions.get(loss_name)
     
     # Load all patch IDs and their regions
@@ -109,7 +109,7 @@ def train_model(config):
         s2_means = stats["mean"]
         s2_stds = stats["std"]
     else:
-        # Calculate means and stds ONLY on the training regions to avoid data leakage
+        # Calculate means and stds only on the training regions to avoid data leakage
         print("Calculating S2 means and stds on training data...")
         s2_means, s2_stds = compute_s2_mean_std_multi(
             s2_root=config["data"]["s2_dir"],
@@ -182,12 +182,11 @@ def train_model(config):
 
     train_losses = []
     
-    # --- Early Stopping Variables ---
+    # Early Stopping Variables
     best_val_loss = float('inf')
     patience_counter = 0
-    patience = 200 # Wait for 10 epochs with no improvement
+    patience = 200 
     max_epochs = config["training"]["epochs"]
-    # --------------------------------
 
     # Create models directory
     os.makedirs(config["logging"]["save_dir"], exist_ok=True)
@@ -294,7 +293,7 @@ def train_model(config):
         
         print(f"Epoch {epoch+1}: Train Loss = {avg_loss:.4f}, Validation Loss = {avg_val_loss:.4f}")
 
-        # Early Stopping Logic
+        # Early stopping logic
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
             patience_counter = 0
@@ -323,10 +322,10 @@ def train_model(config):
         wandb.log({"average_training_time_sec_per_epoch": average_time})
     print(f"Average training time per epoch: {average_time:.2f} seconds")
     
-    # Final model path for return.
+    # Final model path for evaluation
     final_model_path = os.path.join(save_dir, f"{wandb_name}_best.pth")
 
-    # Run reconstruction evaluation if requested
+    # Run reconstruction evaluation 
     if config["evaluation"]["evaluate"]:
         print(f"Loading best model from {final_model_path} for evaluation...")
         best_checkpoint = torch.load(final_model_path, map_location=device)
@@ -384,7 +383,7 @@ def run_reconstruction_evaluation(model, val_dataset, config, scheduler=None):
     attrs = batch["attrs"].to(config["system"]["device"])
     mask = batch["mask"].to(config["system"]["device"])
     chosen_ids_batch = batch["chosen_ids"]
-    tile_ids_batch = batch["tile_id"] # Retrieve tile IDs for naming saved files
+    tile_ids_batch = batch["tile_id"] 
 
     # Get batch dimensions and context information
     B = lidar.size(0)
@@ -548,8 +547,6 @@ def run_reconstruction_evaluation(model, val_dataset, config, scheduler=None):
                            f"Rough: {rough_tile[i]:.3f}")
                 ax.text(x, img_np.shape[0] + 10, metrics, ha='left', va='top',
                         fontsize=12, bbox=dict(facecolor='white', alpha=0.85, boxstyle='round'))
-
-                # No need to draw red rectangles, since all S2 patches shown are "chosen"
             
             footer = (f"Mean → MAE: {mae:.3f} | RMSE: {rmse:.3f} | SSIM: {ssim_avg:.3f} | Topo RMSE: {topo_avg:.3f} | "
                       f"Roughness: {rough_avg:.3f}")
@@ -594,7 +591,6 @@ if __name__ == "__main__":
         config = yaml.safe_load(f)
 
     # Override YAML values with command-line arguments if provided
-    # Note: `action='store_true'` arguments are handled differently
     if args.s2_dir: config['data']['s2_dir'] = args.s2_dir
     if args.lidar_dir: config['data']['lidar_dir'] = args.lidar_dir
     if args.batch_size: config['training']['batch_size'] = args.batch_size
@@ -671,6 +667,7 @@ if __name__ == "__main__":
         print(f"Evaluation:")
         print(f"  Sampling Methods: {', '.join(config['evaluation']['sampling_methods'])}")
     print("="*50)
+    
     # Empty cache
     torch.cuda.empty_cache()
     print("\nStarting training...")

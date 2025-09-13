@@ -150,8 +150,6 @@ if __name__ == "__main__":
     if args.eval_index_json: config['evaluation']['eval_index_json'] = args.eval_index_json
     if args.device: config['system']['device'] = args.device
     if args.debug: config['system']['debug'] = True
-    
-    # Add a new argument for the pretrained model path
     if args.pretrained_model_path:
         config['evaluation']['pretrained_model_path'] = args.pretrained_model_path
     else:
@@ -172,11 +170,11 @@ if __name__ == "__main__":
             device = "cpu"
     config['system']['device'] = device
     
-    # Load original config from the model checkpoint to ensure consistency
+    # Load original config from the model checkpoint
     checkpoint = torch.load(config['evaluation']['pretrained_model_path'], map_location=device)
     original_config = checkpoint['config']
     
-    # Update current config with original values for consistency
+    # Update current config with original values
     config['training']['context_k'] = original_config['training']['context_k']
     config['training']['randomize_context'] = original_config['training']['randomize_context']
     config['training']['timesteps'] = original_config['training']['timesteps']

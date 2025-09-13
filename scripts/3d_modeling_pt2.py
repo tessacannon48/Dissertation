@@ -4,7 +4,7 @@ import rasterio
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
-# --- Utility Functions ---
+# Utility helpers
 def subsample(arr, step):
     """Downsamples a 2D array by a given step."""
     return arr[::step, ::step]
@@ -25,9 +25,8 @@ def plot_single_3d_surface(ax, lidar_array, title="3D LiDAR Surface Plot", cmap=
     ax.set_zlim(-1.5, 1.5)
 
     # Create the surface plot. The `plot_surface` function automatically
-    # ignores NaN values, creating "holes" in the surface.
     surface = ax.plot_surface(
-        X, Y, lidar_array,  # Pass the array with NaNs directly
+        X, Y, lidar_array, 
         cmap=cmap,
         alpha=0.9,
         edgecolor='none',
@@ -81,7 +80,7 @@ def plot_all_three_3d_surfaces(gt_array, pred_array, diff_array, step=4, out_pat
 
     plt.show()
 
-# --- Main Script to Load and Plot ---
+# Core function for loading and plotting split mosaics
 
 def load_and_plot_split_mosaics(out_dir):
     """
@@ -112,7 +111,6 @@ def load_and_plot_split_mosaics(out_dir):
     mask_y_lt_x = y_coords < x_coords
     
     # Create split arrays for Region 1 (y > x)
-    # The NaNs are crucial for "masking" the data in the plot
     gt_array_1 = np.where(mask_y_gt_x, gt_array, np.nan)
     pred_array_1 = np.where(mask_y_gt_x, pred_array, np.nan)
     diff_array_1 = np.where(mask_y_gt_x, diff_array, np.nan)
@@ -146,6 +144,6 @@ def load_and_plot_split_mosaics(out_dir):
 
     print("\nPlotting complete.")
 
-# --- Execution ---
+# Execution
 output_directory = '/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/final/mod_final/diagrams'
 load_and_plot_split_mosaics(output_directory)

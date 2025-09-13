@@ -40,7 +40,7 @@ class DoubleConv(nn.Module):
 
         # FiLM: produce gamma, beta for both norms at once (2 layers × C each)
         self.cond_embed = nn.Sequential(
-            nn.Linear(embed_dim, 2 * 2 * out_channels),  # [γ1, β1, γ2, β2]
+            nn.Linear(embed_dim, 2 * 2 * out_channels),  
         )
         with torch.no_grad():
             for m in self.cond_embed.modules():

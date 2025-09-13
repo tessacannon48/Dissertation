@@ -155,7 +155,7 @@ class LidarS2Dataset(Dataset):
             s2_processed.append(arr)
         s2 = torch.cat(s2_processed, dim=0)
 
-        # Gather means/stds for the CHOSEN patches
+        # Gather means/stds for the chosen patches
         chosen_means = torch.cat([self.s2_means[i*4:(i+1)*4] for i in chosen_ids], dim=0)
         chosen_stds = torch.cat([self.s2_stds[i*4:(i+1)*4] for i in chosen_ids], dim=0)
         
