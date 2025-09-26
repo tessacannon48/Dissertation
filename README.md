@@ -60,27 +60,29 @@ This study uses LiDAR data collected from the Qikiqtaaluk Region of Nunavut, Can
 
 **Provider:** [ESA Copernicus Data Space](https://dataspace.copernicus.eu/)
 
-The multispectral satellite imagery used in this study is obtained from the European Space Agency’s (ESA) Sentinel-2 mission. Four of the 13 bands, RGB+NIR (10 m), were selected for this study due to their ability to capture fine-scale surface texture and reflectance characteristics that may be correlated with surface roughness and elevation. 
+The multispectral satellite imagery used in this study is obtained from the European Space Agency’s (ESA) Sentinel-2 mission. Four of the 13 bands, RGB+NIR (10 m), were selected for this study due to their ability to capture fine-scale surface texture and reflectance characteristics that may be correlated with surface roughness and elevation.
+
 ---
 
 ## Dataset Construction
 ![alt text](https://github.com/tessacannon48/Dissertation/blob/main/figures/sample_patch.png)
 
 1. Preprocessing
-**Script:** `/Dissertation/scripts/lidar_preprocessing.py`  
-The LiDAR data were originally recorded as three-dimensional point clouds at 1m resolution (WGS84). The coordinates were reprojected into a locally optimized, meter-based coordinate system using a custom Transverse Mercator projection. To remove large-scale elevation trends and emphasize local surface roughness, the raw elevations were converted to RANSAC residuals by fitting a quadratic surface to each dataset. 
+- Script: `/Dissertation/scripts/lidar_preprocessing.py`  
+- The LiDAR data were originally recorded as three-dimensional point clouds at 1m resolution (WGS84). The coordinates were reprojected into a locally optimized, meter-based coordinate system using a custom Transverse Mercator projection. To remove large-scale elevation trends and emphasize local surface roughness, the raw elevations were converted to RANSAC residuals by fitting a quadratic surface to each dataset. 
 
 2. Geolocation
-**Notebook:** `/Dissertation/notebooks/data_collocation.ipynb`  
-To identify valid Sentinel-2 imagery for training, a querying pipeline was developed using the Copernicus Data Space Ecosystem (CDSE) API to match optical satellite images with the spatial extent of the airborne LiDAR data.
+- Notebook:`/Dissertation/notebooks/data_collocation.ipynb`  
+- To identify valid Sentinel-2 imagery for training, a querying pipeline was developed using the Copernicus Data Space Ecosystem (CDSE) API to match optical satellite images with the spatial extent of the airborne LiDAR data.
 
 3. Patching
-**Notebook:** `/Dissertation/notebooks/patching.ipynb` 
-The dataset construction followed three main steps. First, the LiDAR GeoTIFF tiles were mosaicked into a unified, geographically aligned grid. Second, a sliding window of 256⇥256 pixels with a stride of 128 pixels (50% overlap) was applied to extract LiDAR patches. For each patch, the geographic bounds were reprojected from the LiDAR coordinate reference system (CRS) to the Sentinel-2 CRS in order to extract the corresponding 26⇥26 pixel windows from each of the six Sentinel-2 products.
+   
+- Notebook: `/Dissertation/notebooks/patching.ipynb`
+- The dataset construction followed three main steps. First, the LiDAR GeoTIFF tiles were mosaicked into a unified, geographically aligned grid. Second, a sliding window of 256⇥256 pixels with a stride of 128 pixels (50% overlap) was applied to extract LiDAR patches. For each patch, the geographic bounds were reprojected from the LiDAR coordinate reference system (CRS) to the Sentinel-2 CRS in order to extract the corresponding 26⇥26 pixel windows from each of the six Sentinel-2 products.
 
-4. Transformations
-**Script:** `/Dissertation/scripts/main.py` 
-The dataset class used to create the input dataset applies several selections and trans- formations to adequately prepare the data for modeling. First, a specified k number of Sentinel-2 patches are selected either randomly or deterministically depending on the given experiment being performed. Following selection, each Sentinel-2 patch is resized to the dimensions of the LiDAR patch (256⇥256 pixels) using bilinear interpolation. Next, Sentinel-2 data is normalized using the global mean and standard deviation calculated across the training dataset: these statistics are computed for each of the 24 channels independently, treating each of the six temporal images and their four bands as a separate channel. The LiDAR data is not transformed as the values are already centered around zero from the RANSAC calculation. The training set is then randomly augmented using horizontal flips, vertical flips, and rotations to both the LiDAR and Sentinel-2 data to increase the variety of the training samples and improve the model’s robustness.Finally, the attributes are parsed for each Sentinel-2 patch and encoded in the following manner: cloud coverage percentage is scaled to be between 0 and 1, the age of the image is calculated as a positive or negative scalar value which represents the days relative to the LiDAR acquisition date, the Zenith angles are scaled to be between 0 and 1, and the Azimuth angles are transformed into two features, the cosine and sine of the original angle, using sinusoidal encoding. 
+5. Transformations
+- Script: `/Dissertation/scripts/main.py` 
+- The dataset class used to create the input dataset applies several selections and transformations to adequately prepare the data for modeling. First, a specified k number of Sentinel-2 patches are selected either randomly or deterministically depending on the given experiment being performed. Each Sentinel-2 patch is then resized to the dimensions of the LiDAR patch (256x256 pixels) using bilinear interpolation. Sentinel-2 data is normalized using the global mean and standard deviation calculated across the training dataset, computed for each of the bands channels independently. The LiDAR data is not transformed as the values are already centered around zero from the RANSAC calculation. The training set is then randomly augmented to increase the variety of the training samples and improve the model’s robustness. Finally, the Sentinel-2 attributes are encoded in the following manner: cloud coverage percentage is scaled to be between 0 and 1, the age of the image is calculated as a positive or negative scalar value which represents the days relative to the LiDAR acquisition date, the Zenith angles are scaled to be between 0 and 1, and the Azimuth angles are transformed into two features, the cosine and sine of the original angle, using sinusoidal encoding. 
 
 ---
 
@@ -88,76 +90,85 @@ The dataset class used to create the input dataset applies several selections an
 ![alt text](https://github.com/tessacannon48/Dissertation/blob/main/figures/model_diagram.png)
 
 ### Model
-The model is a conditional U-Net diffusion architecture designed for cross-modal generation. It takes as input the noisy LiDAR patch (1 channel) and conditions on the collocated Sentinel-2 patches (4 bands per patch, with *k* selectable patches) as well as auxiliary metadata vectors. The network is trained within a denoising diffusion probabilistic model (DDPM) framework to iteratively recover high-resolution synthetic elevation maps from noisy inputs, guided by optical satellite imagery.  
+The model is a conditional U-Net diffusion architecture designed for cross-modal generation. It takes as input the noisy LiDAR patch (1 channel) and conditions on the collocated Sentinel-2 patches (4 bands per patch, with *k* selectable patches) as well as Sentinel-2 attribute vectors. The network is trained within a denoising diffusion probabilistic model (DDPM) framework to iteratively recover high-resolution synthetic elevation maps from noisy inputs, guided by the conditioning.  
 
 Note that the modeling setup enables dynamic adjustment of the model architecture to allow for ablation studies of architectural variants and sampling methods. 
-
-### Architecture
-The baseline architecture is a U-Net with depth 4 and base channels of 128, which is then dynamically adjusted according to experimental settings.  
 
 **Inputs**  
 - LiDAR residual map: `[1, H, W]`  
 - Sentinel-2 context: `[4k, H, W]` (4 bands × k patches)  
-- Attributes: `[8k]` (per-patch metadata, optional)  
+- Attributes: `[8k]` (per-patch attributes)  
 - Diffusion timestep: `[1]`  
 
-**Conditioning**  
-- Timestep → MLP: Linear → SiLU → Linear (output size 256)  
-- Attributes → MLP: Linear → SiLU → Linear (output size 256)  
-- Combined vector injected at all layers via **FiLM** modulation of GroupNorm.  
+**Architecture**
+- **Base**: U-Net with dynamic depth (default = 4) and base channels (default = 128).  
+- **Conditioning**: Sentinel-2 patches (4 bands × k), metadata vectors, and diffusion timestep. Conditioning injected at every block via FiLM-modulated GroupNorm.  
+- **Encoder/Decoder**: Standard downsampling (MaxPool + DoubleConv) and upsampling (TransposeConv + DoubleConv) with skip connections.  
+- **Attention**: Optional self-attention modules, default = bottleneck only.  
+- **Blocks**: DoubleConv = two 3×3 convs with GroupNorm, FiLM conditioning, and GELU activation.  
+- **Output**: Final 1×1 conv producing a single-channel LiDAR residual map.  
+- **Dynamic behavior**: Depth, channels, number of context patches (*k*), and attention placement can all be varied for experiments.
 
-**Encoder (Down path)**  
-- Input DoubleConv: `[1 + 4k] → 128`  
-- Four Down blocks (MaxPool2d + DoubleConv):  
-  - 128 → 256  
-  - 256 → 512  
-  - 512 → 1024  
-  - 1024 → 1024 (capped at 8× base)  
-- Skip connections saved at each stage.  
+## Training Configuration
 
-**Bottleneck**  
-- DoubleConv: `1024 → 1024`  
-- **Self-Attention** applied here only (1024 channels, 1×1 conv q/k/v/proj).  
+### Default Training parameters
+- **Batch Size**: 8
+- **Epochs**: 200
+- **Learning Rate**: 0.0001
+- **Timesteps**: 1000
+- **Noise Schedule**: Linear
+- **Loss Function**: MSE (masked on valid LiDAR regions)
+- **Context *k***: 1
+- **Randomize Context**: False
 
-**Decoder (Up path)**  
-- Four Up blocks (ConvTranspose2d + Concat + DoubleConv):  
-  - 1024↑ (→512) + skip(1024) → 1024  
-  - 1024↑ (→512) + skip(512) → 512  
-  - 512↑ (→256) + skip(256) → 256  
-  - 256↑ (→128) + skip(128) → 256  
+### Experiments
 
-**Output**  
-- Final 1×1 convolution: `256 → 1` (predicted LiDAR residuals).  
+The code in this repository is designed to allow dynamic configuration of model architecture and hyperparameters. Below are the parameters, architectural variants, and methods tested during a series of controlled ablation studies to determine the optimal model approach for this task. Alternative values of hyperparameters can be tested using command-line arguments to adjust the config.  
 
-**Block details**  
-- **DoubleConv**: two 3×3 conv layers, each → GroupNorm(8 groups, affine=False) → FiLM conditioning → GELU activation.  
-- **Up**: ConvTranspose2d (2×2, stride 2) for upsampling.  
-- **Down**: MaxPool2d (2×2) for downsampling.  
-- **Attention**: Configurable via variants (`none`, `all`, `mid`, `heavy`), but default = **bottleneck only**.  
+- **Baseline tuning**:
+  - Input: 1 Sentinel-2 patch + attributes, output: 256×256 LiDAR residuals  
+  - Diffusion: DDPM (1000 steps), loss: Masked MSE  
+  - Sweeps:  
+    - Learning rate (1e-3, 1e-4, 1e-5)  
+    - Noise schedule (linear vs. cosine)  
+    - Embedding dimension (128, 256)  
+    - Loss variations: Masked MAE, Hybrid (MAE/MSE + gradient loss, λ = {0.1, 0.5, 1.0})  
 
-**Dynamic behavior**  
-- `unet_depth`, `base_channels`, and attention placement are configurable by experiment.  
-- Supports ablation studies by toggling context patches, metadata, and attention variants.
+- **Experiment 1: Architectural variations**  
+  - Tested on baseline:  
+    - Attention placement (bottleneck, medium attention, heavy attention)  
+    - UNet depth (shallow (3) vs. deep (5))  
+    - Channel width (narrow vs. wide)  
 
+- **Experiment 2: Sampling strategies**  
+  - Compared deterministic samplers: DDPM, DDIM, PLMS  
+  - Measured trade-off between reconstruction quality and runtime  
 
-### Training Configuration
+- **Experiment 3: Additional context**  
+  - Added multiple Sentinel-2 patches as conditioning  
+    - 1 deterministically selected patch
+    - 2 deterministically selected patches
+    - 3 deterministically selected patches
 
-## Experiments
+- **Experiment 4: Randomized context**  
+  - Tested robustness to randomly chosen Sentinel-2 patches  
+    - k = 1, 3, 6 random patches per sample  
 
 ---
 
-## Limitations
+## Limitations and Constraints
 
-
-### Data Limitations
-
-### Computational Constraints
+- During model development, training was limited to 50 epochs in order to balance computational resource use with experimental breadth.
+- A sequential search strategy was adopted with only a limited number of overlapping parameter combinations tested, rather than a full grid search, due to computational and time constraints.
+- Evaluation metrics used to judge model variants not perfect indicators of reconstruction quality.
 ---
-
-## Future Work
 
 ## Acknowledgements
 
-## References
-<a id="1">[1]</a> 
-#link
+- This project was completed as the dissertation for the MSc in Artificial Intelligence for Sustainable Development at University College London.
+- The project was supervised by Dr. Michel Tsamados from the UCL Earth Science Department and Petru Manescu from the UCL Computer Science Department.
+- Thanks to contributors Thomas Newman, Weibin Chen, and Alex Saoulis.
+
+## Contact
+
+Please email me tessacannon48@gmail.com if you would like to discuss this work.
