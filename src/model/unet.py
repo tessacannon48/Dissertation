@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from model.blocks import DoubleConv, Down, Up, SelfAttention2D
-from diffusion.utils import timestep_embedding
+from .blocks import DoubleConv, Down, Up, SelfAttention2D
+from src.diffusion.utils import timestep_embedding
 
 # =============================================================================
 # MODEL ARCHITECTURE
