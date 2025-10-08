@@ -11,18 +11,7 @@ This project aims to develop and validate a conditional diffusion model capable 
 ### Motivation
 
 The motivation of this study is to enable safer navigation for Indigenous communities in the Arctic by improving the estimation of fast ice conditions. Through the generation of high-resolution DEMs derived from remote sensing data, this work seeks to provide accurate representations of ice surface roughness and topography, which are key indicators of ice safety.
-
-## Getting Started
-
-### Installation
-To set up the environment:
-
-```bash
-git clone https://github.com/tessacannon48/Dissertation.git
-cd Dissertation
-pip install -r requirements.txt
-```
-
+  
 ### Repository Structure
 
 ```
@@ -163,6 +152,91 @@ The code in this repository is designed to allow dynamic configuration of model 
 - Evaluation metrics used to judge model variants not perfect indicators of reconstruction quality.
 ---
 
+## Setup & Execution
+
+Follow the steps below to setup and execute the project with your LiDAR data.
+
+### Installation
+1. Set up the environment:
+
+```bash
+git clone https://github.com/tessacannon48/Dissertation.git
+cd Dissertation
+pip install -r requirements.txt
+```
+
+2. Set up LiDAR data:
+- Download LiDAR data to /raw_data folder.
+- LiDAR data should be preprocessed as RANSAC residuals such that they are roughly normally distributed around zero.
+
+### Data Collocation
+
+1. Launch Jupyter and open the notebook:
+```bash
+jupyter notebook data_collocation.ipynb
+```
+   - This notebook identifies all Sentinel-2 Level-2A products that overlap LiDAR coverage area, filters for usable (cloud-free) imagery, and prepares them for training. 
+
+2. In cell 3, set:
+   - Your Copernicus Data Space (CDSE) username and password
+   - The LiDAR `.tif` directory path (e.g., `raw_data/pondinlet_lidar`)
+   - The date range for Sentinel-2 products to query (+/- 4 days of the LiDAR collection date)
+     
+3. Execute cells 3-7 to:
+   - Cell 3: Query CDSE to find Sentinel-2 products that are geolocated with the LiDAR area
+   - Cell 4: Visualize the results
+   - Cell 5: Ensure products have 100% coverage the LiDAR area
+   - Cell 6: Download the Sentinel-2 products
+   - Cell 7: Visualize the Sentinel-2 products for manual inspection
+
+### Patching
+
+1. Launch Jupyter and open the notebook:
+```bash
+jupyter notebook patching.ipynb
+```
+   - This notebook extracts spatially aligned Sentinel-2 and LiDAR patch sets to prepare datasets for model training.
+
+2. Set the input and output paths in cell 4:
+   ```python
+   sentinel_granule_dirs = [
+       "/path/to/S2A_MSIL2A_20240422T173911.../GRANULE",
+       "/path/to/S2B_MSIL2A_20240424T172859.../GRANULE",
+       "/path/to/S2A_MSIL2A_20240426T171901.../GRANULE",
+       "/path/to/S2B_MSIL2A_20240427T173859.../GRANULE",
+       "/path/to/S2A_MSIL2A_20240429T172901.../GRANULE",
+       "/path/to/S2B_MSIL2A_20240430T174909.../GRANULE",
+   ]
+
+   lidar_dir = "/path/to/lidar_tifs"
+   out_lidar_dir = "./lidar_patches"
+   out_s2_dir = "./s2_patches_multi"
+   ```
+
+- Replace these with your own Sentinel-2 and LiDAR directories.
+- Output directories are where the patch sets will be stored.
+     
+3. Execute cells 5-7 to:
+   - Cell 5: Merge LiDAR files
+   - Cell 6: Divide LiDAR into 10 regions with roughly equal number of patches
+   - Cell 7: Execute patching:
+      - Stacks Sentinel-2 bands (RBG + NIR)
+      - Slides window across LiDAR region
+      - Transforms LiDAR bounds to extract corresponding Sentinel-2 patch
+      - Saves each Sentinel-2 patch set + metadata and LiDAR patch set to out directories (patches are paired using tile IDs ex. 00001)
+      - Visualizes sample patch sets.
+
+### Training
+
+1. Edit config.yaml: 
+   - Specify directories to LiDAR and Sentinel-2
+   - Set default training parameters
+   - Set WANDB login
+2. Run main.py, specifying optional config changes in terminal:
+```bash
+python Dissertation/scripts/main.py --context_k 1 --attention_variant mid --sampling_methods plms --lr 1e-4 --epochs 200 --unet_depth 4 --noise_schedule cosine --base_channels 64 --loss_name masked_hybrid_mse_loss --loss_alpha 1.0 --evaluate --run_name final_improved_baseline
+```
+- Outputs trained model, reconstruction figure, and patch-wise reconstruction statistics
 ## Acknowledgements
 
 - This project was completed as the dissertation for the MSc in Artificial Intelligence for Sustainable Development at University College London.
