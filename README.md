@@ -237,11 +237,15 @@ jupyter notebook patching.ipynb
 python Dissertation/scripts/main.py --context_k 1 --attention_variant mid --sampling_methods plms --lr 1e-4 --epochs 200 --unet_depth 4 --noise_schedule cosine --base_channels 64 --loss_name masked_hybrid_mse_loss --loss_alpha 1.0 --evaluate --run_name final_improved_baseline
 ```
 - Outputs trained model, reconstruction figure, and patch-wise reconstruction statistics
+
+---
 ## Acknowledgements
 
 - This project was completed as the dissertation for the MSc in Artificial Intelligence for Sustainable Development at University College London.
 - The project was supervised by Dr. Michel Tsamados from the UCL Earth Science Department and Petru Manescu from the UCL Computer Science Department.
 - Thanks to contributors Thomas Newman, Weibin Chen, and Alex Saoulis.
+
+---
 
 ## Contact
 
