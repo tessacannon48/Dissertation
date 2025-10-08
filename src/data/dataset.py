@@ -64,15 +64,19 @@ class LidarS2Dataset(Dataset):
             pid = self._extract_id(lidar_path)
             s2_group_dir = os.path.join(self.s2_dir, f"s2_patch_{pid}")
             # Ensure all S2 files for the patch exist
-            if all(os.path.exists(os.path.join(s2_group_dir, f"t{i}.tif")) for i in range(self.max_s2)):
+            available_ids = [i for i in range(self.max_s2)
+                 if os.path.exists(os.path.join(s2_group_dir, f"t{i}.tif"))]
+
+            if len(available_ids) >= self.context_k:
                 self.samples.append({
                     "lidar_path": lidar_path,
                     "s2_group_dir": s2_group_dir,
-                    "tile_id": pid
+                    "tile_id": pid,
+                    "available_ids": available_ids
                 })
 
         self.num_samples = len(self.samples)
-        print(f"Prepared {self.num_samples} matched LiDAR↔6×S2 groups.")
+        print(f"Prepared {self.num_samples} matched LiDAR↔S2 groups (k={self.context_k}).")
 
     def _extract_id(self, path: str) -> str:
         return os.path.basename(path).split("_")[-1].split(".")[0]
@@ -116,58 +120,75 @@ class LidarS2Dataset(Dataset):
 
     def __getitem__(self, idx: int) -> dict:
         sample_paths = self.samples[idx]
-        lidar_path = sample_paths["lidar_path"]
+        lidar_path   = sample_paths["lidar_path"]
         s2_group_dir = sample_paths["s2_group_dir"]
-        tile_id = sample_paths["tile_id"]
+        tile_id      = sample_paths["tile_id"]
+        available_ids = sample_paths.get("available_ids", list(range(self.max_s2)))
 
-        # Load data from disk
-        with rasterio.open(lidar_path) as src:
-            lidar_full = torch.from_numpy(src.read().astype(np.float32))
-        data = lidar_full[0:1]
-        mask = lidar_full[1]
+        # -------------------------
+        # 1) Choose which S2 times to use (define chosen_ids FIRST)
+        # -------------------------
+        pool = sorted(available_ids)
+        if len(pool) < self.context_k:
+            raise RuntimeError(
+                f"Patch {tile_id}: only {len(pool)} S2 times available, "
+                f"but context_k={self.context_k}."
+            )
 
-        s2_patches_full = []
-        for i in range(self.max_s2):
-            with rasterio.open(os.path.join(s2_group_dir, f"t{i}.tif")) as src:
-                arr = torch.from_numpy(src.read()[:4].astype(np.float32))
-            s2_patches_full.append(arr)
-
-        all_attrs = self._parse_attrs_json(os.path.join(s2_group_dir, "attrs.json"))
-        
-        # S2 selection logic
         if self.randomize_context:
             if self.split == "train":
-                chosen_ids = sorted(random.sample(range(self.max_s2), self.context_k))
+                chosen_ids = sorted(random.sample(pool, self.context_k))
             else:
+                # deterministic selection for val/test
                 seed = int(hashlib.sha1(tile_id.encode("utf-8")).hexdigest(), 16) % (2**32 - 1)
                 rng = random.Random(seed)
-                chosen_ids = sorted(rng.sample(range(self.max_s2), self.context_k))
+                chosen_ids = sorted(rng.sample(pool, self.context_k))
         else:
-            chosen_ids = list(range(self.context_k))
-        
-        s2_list = [s2_patches_full[i] for i in chosen_ids]
-        attrs_list = [all_attrs[i] for i in chosen_ids]
+            # take the first k available deterministically
+            chosen_ids = pool[:self.context_k]
 
-        s2_processed = []
-        for arr in s2_list:
+        # -------------------------
+        # 2) Load LiDAR (data + mask)
+        # -------------------------
+        with rasterio.open(lidar_path) as src:
+            lidar_full = torch.from_numpy(src.read().astype(np.float32))
+        if lidar_full.shape[0] == 1:
+            data = lidar_full[0:1]
+            mask = torch.ones_like(data[0])
+        else:
+            data = lidar_full[0:1]
+            mask = lidar_full[1]
+
+        # -------------------------
+        # 3) Read only the chosen S2 times
+        # -------------------------
+        s2_list = []
+        for i in chosen_ids:
+            s2_path = os.path.join(s2_group_dir, f"t{i}.tif")
+            with rasterio.open(s2_path) as src:
+                arr = torch.from_numpy(src.read()[:4].astype(np.float32))  # R,G,B,NIR
             if arr.shape[-2:] != self.target_s2_hw:
-                arr = F.interpolate(arr.unsqueeze(0), size=self.target_s2_hw, mode="bilinear", align_corners=False).squeeze(0)
-            s2_processed.append(arr)
-        s2 = torch.cat(s2_processed, dim=0)
+                arr = F.interpolate(arr.unsqueeze(0), size=self.target_s2_hw,
+                                    mode="bilinear", align_corners=False).squeeze(0)
+            s2_list.append(arr)
+        s2 = torch.cat(s2_list, dim=0)   # [k*4, Hc, Wc]
 
-        # Gather means/stds for the chosen patches
+        # -------------------------
+        # 4) Attributes (only for chosen times)
+        # -------------------------
+        all_attrs = self._parse_attrs_json(os.path.join(s2_group_dir, "attrs.json"))
+        attrs = torch.cat([all_attrs[i] for i in chosen_ids], dim=0)  # [k*8]
+
+        # -------------------------
+        # 5) Normalize S2 with training stats (per chosen time)
+        # -------------------------
         chosen_means = torch.cat([self.s2_means[i*4:(i+1)*4] for i in chosen_ids], dim=0)
-        chosen_stds = torch.cat([self.s2_stds[i*4:(i+1)*4] for i in chosen_ids], dim=0)
-        
-        # Reshape for broadcasting
-        means_reshaped = chosen_means.view(-1, 1, 1)
-        stds_reshaped = chosen_stds.view(-1, 1, 1)
+        chosen_stds  = torch.cat([self.s2_stds[i*4:(i+1)*4]  for i in chosen_ids], dim=0)
+        s2 = (s2 - chosen_means.view(-1,1,1)) / (chosen_stds.view(-1,1,1) + 1e-6)
 
-        # Normalize using means/stds calculated on training set only
-        s2 = (s2 - means_reshaped) / (stds_reshaped + 1e-6)
-
-        attrs = torch.cat(attrs_list, dim=0)
-
+        # -------------------------
+        # 6) Optional augmentation (train only)
+        # -------------------------
         if self.augment and self.split == "train":
             if random.random() > 0.5:
                 data = TF.hflip(data); s2 = TF.hflip(s2); mask = TF.hflip(mask)
