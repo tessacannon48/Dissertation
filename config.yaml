@@ -2,8 +2,8 @@
 
 # Data paths
 data:
-  s2_dir: "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/input_data/s2_patches"
-  lidar_dir: "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/input_data/lidar_patches"
+  s2_dir: "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/input_data/s2_patches_pondinlet"
+  lidar_dir: "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/input_data/lidar_patches_pondinlet"
 
 # Training parameters
 training:
@@ -29,7 +29,7 @@ model:
 
 # Logging and saving
 logging:
-  wandb_project: "final_dissertation"
+  wandb_project: "revised_dissertation"
   wandb_name: null
   run_name: "default_run"
   save_dir: "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/models"

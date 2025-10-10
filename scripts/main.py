@@ -9,7 +9,7 @@ from tqdm import tqdm
 from torchmetrics.functional import structural_similarity_index_measure as ssim
 import matplotlib.pyplot as plt
 import wandb
-import os
+import os, sys
 import json
 from torch.utils.data import Subset
 import time
@@ -21,6 +21,7 @@ import rasterio
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
 # Import modules
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from src.utils.argparse import parse_arguments
 from src.data.dataset import LidarS2Dataset
 from src.data.processing import compute_s2_mean_std_multi
