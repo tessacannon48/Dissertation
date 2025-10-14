@@ -175,19 +175,25 @@ pip install -r requirements.txt
 ```bash
 jupyter notebook data_collocation.ipynb
 ```
-   - This notebook identifies all Sentinel-2 Level-2A products that overlap LiDAR coverage area, filters for usable (cloud-free) imagery, and prepares them for training. 
+   - This notebook identifies all Sentinel-2 Level-2A products that cover the LiDAR collection area, filters for usable (cloud-free) imagery, and prepares them for training. 
 
 2. In cell 3, set:
    - Your Copernicus Data Space (CDSE) username and password
    - The LiDAR `.tif` directory path (e.g., `raw_data/pondinlet_lidar`)
    - The date range for Sentinel-2 products to query (+/- 4 days of the LiDAR collection date)
      
-3. Execute cells 3-7 to:
-   - Cell 3: Query CDSE to find Sentinel-2 products that are geolocated with the LiDAR area
-   - Cell 4: Visualize the results
-   - Cell 5: Ensure products have 100% coverage the LiDAR area
-   - Cell 6: Download the Sentinel-2 products
-   - Cell 7: Visualize the Sentinel-2 products for manual inspection
+3. Execute cells 3-5 to:
+   - Cell 3: Query CDSE to find Sentinel-2 products that overlap with the LiDAR area.
+   - Cell 4: Filter the CDSE search results to products that cover 100% of the LiDAR area.
+   - Cell 5: Visualize tiles of all of the remaining Sentinel-2 products (single band visualization to reduce processing).
+
+4. In cell 6, set: 
+   - The directory where you would lke the products to be downloaded to (e.g., `./raw_data/pondinlet_sentinel_downloads`)
+   - After visually inspecting the figures from Cell 5, enter a list of the best products (identified by the integer label in the subtitle of each image) from best to worst visibility in the `selected_product_indices` list (e.g., [8,16,22,21,23,6])
+
+5. Execute cells 6-7 to:
+   - Cell 6: Download the selected Sentinel-2 products to the specified directory. 
+   - Cell 7: Unzip the zip files (numbered by the custom order you identified in cell 6). 
 
 ### Patching
 
@@ -199,18 +205,10 @@ jupyter notebook patching.ipynb
 
 2. Set the input and output paths in cell 4:
    ```python
-   sentinel_granule_dirs = [
-       "/path/to/S2A_MSIL2A_20240422T173911.../GRANULE",
-       "/path/to/S2B_MSIL2A_20240424T172859.../GRANULE",
-       "/path/to/S2A_MSIL2A_20240426T171901.../GRANULE",
-       "/path/to/S2B_MSIL2A_20240427T173859.../GRANULE",
-       "/path/to/S2A_MSIL2A_20240429T172901.../GRANULE",
-       "/path/to/S2B_MSIL2A_20240430T174909.../GRANULE",
-   ]
-
+   s2_dir = "path/to/sentinel_downloads"
    lidar_dir = "/path/to/lidar_tifs"
-   out_lidar_dir = "./lidar_patches"
-   out_s2_dir = "./s2_patches_multi"
+   out_lidar_dir = "path/to/outbound_lidar_patches"
+   out_s2_dir = "path/to/outbound_s2_patches"
    ```
 
 - Replace these with your own Sentinel-2 and LiDAR directories.
