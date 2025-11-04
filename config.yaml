@@ -1,9 +1,24 @@
 # config.yaml
 
-# Data paths
+# Data configuration
 data:
-  s2_dir: "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/input_data/s2_patches_pondinlet"
-  lidar_dir: "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/input_data/lidar_patches_pondinlet"
+  train_locations: 
+    - "pondinlet"
+    - "tuq"
+  validation_regions:
+    - 4
+    - 13
+  # pondinlet-cambridge evaluation_patch_ids: ["01851", "01857", "01924",  "02015", "02035", "02047","05506","05516"]
+  evaluation_patch_ids: ["01851", "01857", "01924",  "02015", "02035", "02047","05510","05511"]
+  s2_dirs: 
+    - "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/input_data/s2_patches_pondinlet"
+    - "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/input_data/s2_patches_tuq_train"
+  lidar_dirs: 
+    - "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/input_data/lidar_patches_pondinlet"
+    - "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/input_data/lidar_patches_tuq_train"
+  s2_stats_dir: "/cs/student/projects2/aisd/2024/tcannon/dissertation/Dissertation/input_data/stats"
+  # meters per pixel for LiDAR/residual raster
+  pixel_size_m: 1.0
 
 # Training parameters
 training:
@@ -25,7 +40,6 @@ model:
   base_channels: 128
   embed_dim: 256
   attention_variant: "default"
-  
 
 # Logging and saving
 logging:
@@ -41,6 +55,14 @@ evaluation:
     - ddpm
   evaluate: false
   eval_index_json: "fixed_eval.json"
+    # multiscale JSD settings
+  jsd_scales_m: [1.0, 2.0, 5.0, 10.0]
+  jsd_bins: 256
+  # normal angle settings
+  nae_use_sobel: true
+  nae_degrees: true
+  # PSD settings
+  psd_window: true
 
 # System settings
 system:

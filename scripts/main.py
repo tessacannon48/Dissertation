@@ -8,6 +8,9 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from torchmetrics.functional import structural_similarity_index_measure as ssim
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 import wandb
 import os, sys
 import json
@@ -25,10 +28,20 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from src.utils.argparse import parse_arguments
 from src.data.dataset import LidarS2Dataset
 from src.data.processing import compute_s2_mean_std_multi
-from src.model.unet import ConditionalUNet
+from src.model.unet import ConditionalUNet_A, ConditionalUNet_B, ConditionalUNet_C, ConditionalUNet_D, ConditionalUNet_E
 from src.diffusion.scheduler import LinearDiffusionScheduler, CosineDiffusionScheduler
 from src.diffusion.sampling import p_sample_loop_ddpm, p_sample_loop_ddim, p_sample_loop_plms
 from src.utils.metrics import compute_topographic_rmse, normalize_batch, masked_mse_loss, masked_mae_loss, masked_hybrid_mse_loss, masked_hybrid_mae_loss
+from src.utils.recon_metrics import (
+    rmse as rmse_recon,
+    bias as bias_recon,
+    sigma_error,
+    corr_length_error,
+    normal_angle_error,
+    average_jsd_multiscale,
+    log_psd_rmse,
+    agg
+)
 
 # =============================================================================
 # TRAINING FUNCTION
@@ -76,34 +89,57 @@ def train_model(config):
     
     # Select the loss function
     criterion = loss_functions.get(loss_name)
-    
-    # Load all patch IDs and their regions
-    all_patch_ids = sorted([os.path.basename(p).split('_')[-1].split('.')[0] for p in glob.glob(os.path.join(config["data"]["s2_dir"], "s2_patch_*")) if os.path.isdir(p)])
+
+    # Specify training location names from config
+    train_locations = config["data"].get("train_locations", [])
+    location_tag = "-".join(train_locations) if train_locations else "all"
+
+    # Load all patch IDs and their regions from multiple S2 dirs
+    all_patch_ids = []
+    for s2_dir in config["data"]["s2_dirs"]:
+        patch_ids = [os.path.basename(p).split('_')[-1].split('.')[0] 
+                    for p in glob.glob(os.path.join(s2_dir, "s2_patch_*")) if os.path.isdir(p)]
+        all_patch_ids.extend(patch_ids)
     train_pids = []
     val_pids = []
     
-    # Designate region 4 as validation, the rest as train
+    # Get regions to use as validation from config
+    validation_regions = []
+    for region in config["data"]["validation_regions"]:
+        validation_regions.append(region)
+    
     print("Separating patches by region...")
     for pid in tqdm(all_patch_ids):
-        region_path = os.path.join(config["data"]["s2_dir"], f"s2_patch_{pid}", "region.json")
-        if os.path.exists(region_path):
-            with open(region_path, 'r') as f:
-                region_data = json.load(f)
+        for s2_dir in config["data"]["s2_dirs"]:
+            region_path = os.path.join(s2_dir, f"s2_patch_{pid}", "region.json")
+            if os.path.exists(region_path):
+                with open(region_path, 'r') as f:
+                    region_data = json.load(f)
                 region_id = region_data.get("region_id", -1)
-                
-                if region_id == 4:
+
+                if region_id in validation_regions: # Specify validation regions
                     val_pids.append(pid)
                 else:
                     train_pids.append(pid)
-
-    print(f"Number of training patches (Regions 0-3, 5-9): {len(train_pids)}")
-    print(f"Number of validation patches (Region 4): {len(val_pids)}")
+                break
+        # break early when in debug mode
+        if config["system"]["debug"] and len(train_pids) >= 100 and len(val_pids) >= 8:
+            break
+            
+    print(f"Number of training patches: {len(train_pids)}")
+    print(f"Number of validation patches (Regions {', '.join(map(str, validation_regions))}): {len(val_pids)}")
     
     # Create a list of S2 patch directories for the training set only
-    train_s2_dirs = [os.path.join(config["data"]["s2_dir"], f"s2_patch_{pid}") for pid in train_pids]
-
+    train_s2_dirs = []
+    for s2_dir in config["data"]["s2_dirs"]:
+        for pid in train_pids:
+            patch_path = os.path.join(s2_dir, f"s2_patch_{pid}")
+            if os.path.isdir(patch_path):
+                train_s2_dirs.append(patch_path)
+    """
     # Load or calculate dataset statistics
-    s2_stats_path = os.path.join(config["data"]["s2_dir"], "s2_stats_24.pt")
+    s2_stats_path = os.path.join(config["data"]["s2_stats_dir"], f"s2_stats_{location_tag}.pt")
+    os.makedirs(config["data"]["s2_stats_dir"], exist_ok=True)
 
     if os.path.exists(s2_stats_path):
         stats = torch.load(s2_stats_path)
@@ -113,19 +149,19 @@ def train_model(config):
         # Calculate means and stds only on the training regions to avoid data leakage
         print("Calculating S2 means and stds on training data...")
         s2_means, s2_stds = compute_s2_mean_std_multi(
-            s2_root=config["data"]["s2_dir"],
+            s2_root_list=config["data"]["s2_dirs"],
             num_times=6,
             num_bands=4,
             patch_group_dirs=train_s2_dirs 
         )
         torch.save({"mean": s2_means, "std": s2_stds}, s2_stats_path)
-
+    """
     # Create training and validation datasets using the pre-defined patch IDs
     train_dataset = LidarS2Dataset(
-        lidar_dir=config["data"]["lidar_dir"],
-        s2_dir=config["data"]["s2_dir"],
-        s2_means=s2_means,
-        s2_stds=s2_stds,
+        lidar_dirs=config["data"]["lidar_dirs"],
+        s2_dirs=config["data"]["s2_dirs"],
+        #s2_means=s2_means,
+        #s2_stds=s2_stds,
         context_k=config["training"]["context_k"],
         randomize_context=config["training"]["randomize_context"],
         augment=True,
@@ -135,10 +171,10 @@ def train_model(config):
     )
 
     val_dataset = LidarS2Dataset(
-        lidar_dir=config["data"]["lidar_dir"],
-        s2_dir=config["data"]["s2_dir"],
-        s2_means=s2_means,
-        s2_stds=s2_stds,
+        lidar_dirs=config["data"]["lidar_dirs"],
+        s2_dirs=config["data"]["s2_dirs"],
+        #s2_means=s2_means,
+        #s2_stds=s2_stds,
         context_k=config["training"]["context_k"],
         randomize_context=config["training"]["randomize_context"],
         augment=False, # No augmentation for validation set
@@ -169,14 +205,15 @@ def train_model(config):
     )
 
     # Initialize model
-    model = ConditionalUNet(
+    model = ConditionalUNet_D(
         in_channels=1,
         cond_channels=4 * config["training"]["context_k"],
         attr_dim=8 * config["training"]["context_k"],
         base_channels=config["model"]["base_channels"],
         embed_dim=config["model"]["embed_dim"],
         unet_depth=config["model"]["unet_depth"],
-        attention_variant=config["model"]["attention_variant"]
+        attention_variant=config["model"]["attention_variant"],
+        cond_k=config["training"]["context_k"]
     ).to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=config["training"]["lr"])
@@ -195,7 +232,7 @@ def train_model(config):
     # Initialize a list to store epoch durations
     epoch_durations = []
 
-# Training loop
+    # Training loop
     for epoch in range(max_epochs): 
         
         model.train()
@@ -212,6 +249,8 @@ def train_model(config):
             lidar = batch["lidar"].to(device)
             s2    = batch["s2"].to(device)
             attrs = batch["attrs"].to(device)
+            # Make all attrs null
+            #attrs = torch.zeros_like(attrs)
             mask  = batch["mask"].to(device)
             t = torch.randint(0, config["training"]["timesteps"], (lidar.size(0),), device=device).long()
             
@@ -251,6 +290,8 @@ def train_model(config):
                 lidar = batch["lidar"].to(device)
                 s2    = batch["s2"].to(device)
                 attrs = batch["attrs"].to(device)
+                # Make all attrs null
+                #attrs = torch.zeros_like(attrs)
                 mask  = batch["mask"].to(device)
                 t = torch.randint(0, config["training"]["timesteps"], (lidar.size(0),), device=device).long()
 
@@ -361,8 +402,8 @@ def run_reconstruction_evaluation(model, val_dataset, config, scheduler=None):
     # Set model to eval
     model.eval()
     
-    # Access hand-picked validation sets by ID
-    eval_pids = ["01851", "01857", "01887", "01924", "01959", "02015", "02035", "02047"]
+    # Get hand-picked validation set from config
+    eval_pids = config["data"]["evaluation_patch_ids"]
 
     # Find the indices of these patches in the validation dataset
     eval_indices = [i for i, sample in enumerate(val_dataset.samples) if sample['tile_id'] in eval_pids]
@@ -382,6 +423,8 @@ def run_reconstruction_evaluation(model, val_dataset, config, scheduler=None):
     s2 = batch["s2"].to(config["system"]["device"])
     lidar = batch["lidar"].to(config["system"]["device"])
     attrs = batch["attrs"].to(config["system"]["device"])
+    # Make all attrs null
+    #attrs = torch.zeros_like(attrs)
     mask = batch["mask"].to(config["system"]["device"])
     chosen_ids_batch = batch["chosen_ids"]
     tile_ids_batch = batch["tile_id"] 
@@ -426,41 +469,50 @@ def run_reconstruction_evaluation(model, val_dataset, config, scheduler=None):
             # Move tensors to CPU
             gt = lidar.cpu()
             pred = pred.cpu()
+            m = mask.cpu() if mask is not None else None
+
+            # Get metric parameters from config
+            px = float(config["data"].get("pixel_size_m", 1.0))
+            jsd_scales = tuple(config["evaluation"].get("jsd_scales_m", [1.0, 2.0, 5.0, 10.0]))
+            jsd_bins   = int(config["evaluation"].get("jsd_bins", 256))
+            use_sobel  = bool(config["evaluation"].get("nae_use_sobel", True))
+            deg        = bool(config["evaluation"].get("nae_degrees", True))
+            use_window = bool(config["evaluation"].get("psd_window", True))
 
             # Calculate and log core reconstruction metrics for the entire batch
-            mae_tile = F.l1_loss(pred, gt, reduction='none').mean(dim=(1, 2, 3)).tolist()
-            rmse_tile = ((pred - gt) ** 2).mean(dim=(1, 2, 3)).sqrt().tolist()
-            ssim_tile = [ssim(normalize_batch(pred[i:i+1]), normalize_batch(gt[i:i+1]), data_range=1.0).item() for i in range(B)]
-            topo_tile = [compute_topographic_rmse(gt[i:i+1], pred[i:i+1]).item() for i in range(B)]
-            rough_tile = [abs(torch.std(gt[i]) - torch.std(pred[i])).item() for i in range(B)]
-
-            # Calculate averages for logging
-            mae = float(np.mean(mae_tile))
-            rmse = float(np.mean(rmse_tile))
-            ssim_avg = float(np.mean(ssim_tile))
-            topo_avg = float(np.mean(topo_tile))
-            rough_avg = float(np.mean(rough_tile))
-
-            # Log metrics
-            if wandb.run:
-                wandb.log({
-                    f"{sampler_name}_mae": mae,
-                    f"{sampler_name}_rmse": rmse,
-                    f"{sampler_name}_ssim": ssim_avg,
-                    f"{sampler_name}_topographic_rmse": topo_avg,
-                    f"{sampler_name}_roughness": rough_avg,
-                })
-
-            # Save reconstruction statistics for each sample
+            rmse_tile, bias_tile, sigma_tile_pct = [], [], []
+            clen_tile_pct, nae_tile, jsd_tile, psd_tile = [], [], [], []
+            valid_counts = []
             for i in range(B):
+                # Get data for each tile
+                gi, pi = gt[i], pred[i]
+
+                # Get mask
+                mm = m[i] if m is not None else None
+                valid_counts.append(int(mm.sum()))
+                mm = mm.bool() if mm is not None else None
+                
+                # Calculate metrics
+                rmse_tile.append(rmse_recon(gi, pi, mask=mm).item())
+                bias_tile.append(bias_recon(gi, pi, mask=mm).item())
+                sigma_tile_pct.append(sigma_error(gi, pi, mask=mm).item())
+                clen_tile_pct.append(corr_length_error(gi, pi, mask=mm, pixel_size=px).item())
+                nae_tile.append(normal_angle_error(gi, pi, mask=mm, pixel_size=px, use_sobel=use_sobel, degrees=deg).item())
+                jsd_tile.append(average_jsd_multiscale(gi, pi, scales_m=jsd_scales, pixel_size=px, bins=jsd_bins, mask=mm).item())
+                psd_tile.append(log_psd_rmse(gi, pi, pixel_size=px, mask=mm, window=use_window).item())
+                
+                # Save reconstruction statistics for each sample
                 tile_id = tile_ids_batch[i]
                 reco_stats = {
                     "tile_id": tile_id,
-                    "mae": mae_tile[i],
-                    "rmse": rmse_tile[i],
-                    "ssim": ssim_tile[i],
-                    "topographic_rmse": topo_tile[i],
-                    "roughness": rough_tile[i],
+                    "rmse_phys_m": rmse_tile[i],
+                    "bias_phys_m": bias_tile[i],
+                    "sigma_error_pct": sigma_tile_pct[i],
+                    "corr_length_error_pct": clen_tile_pct[i],
+                    "normal_angle_error_deg": nae_tile[i],
+                    "jsd": jsd_tile[i],
+                    "psd_rmse": psd_tile[i],
+                    "valid_pixel_count": valid_counts[i],
                     "gt_min_val": float(gt[i].min()),
                     "gt_max_val": float(gt[i].max()),
                     "gt_mean_val": float(gt[i].mean()),
@@ -479,25 +531,65 @@ def run_reconstruction_evaluation(model, val_dataset, config, scheduler=None):
                     json.dump(reco_stats, f, indent=4)
                 print(f"Saved stats for tile {tile_id} to {stats_path}")
 
-            # Visualization normalization + error calculations
-            gt_norm = normalize_batch(gt)
-            pred_norm = normalize_batch(pred)
-            abs_error = (gt - pred).abs()
-            err_max = abs_error.amax(dim=(1,2,3), keepdim=True)
-            err_norm = abs_error / (err_max + 1e-8)
+            # Calculate averages for logging
+            rmse_mean   = agg(rmse_tile, weights=valid_counts, reduce="weighted")  # micro-average
+            bias_mean   = agg(bias_tile, weights=valid_counts, reduce="weighted")
+            sigma_mean  = agg(sigma_tile_pct, reduce="mean")     # macro-average
+            sigma_med   = agg(sigma_tile_pct, reduce="median")   # robustness
+            ell_mean    = agg(clen_tile_pct, reduce="mean")
+            ell_med     = agg(clen_tile_pct, reduce="median")
+            nae_mean    = agg(nae_tile, weights=valid_counts, reduce="weighted")
+            jsd_mean    = agg(jsd_tile, reduce="mean")
+            psd_mean    = agg(psd_tile, reduce="mean")
+            
+            # Log metrics
+            if wandb.run:
+                wandb.log({
+                    f"{sampler_name}_rmse": rmse_mean,
+                    f"{sampler_name}_bias": bias_mean,
+                    f"{sampler_name}_sigma_error_pct": sigma_mean,
+                    f"{sampler_name}_sigma_error_med_pct": sigma_med,
+                    f"{sampler_name}_corr_length_error_pct": ell_mean,
+                    f"{sampler_name}_corr_length_error_med_pct": ell_med,
+                    f"{sampler_name}_normal_angle_error_deg": nae_mean,
+                    f"{sampler_name}_jsd": jsd_mean,
+                    f"{sampler_name}_psd_rmse": psd_mean,
+                })
 
-            # Repeat grayscale GT, Pred, and Error tensors to have 3 channels for visualization
-            gt_rgb = gt_norm.repeat(1, 3, 1, 1)
-            pred_rgb = pred_norm.repeat(1, 3, 1, 1)
-            err_rgb = err_norm.repeat(1, 3, 1, 1)
+            # Determine the total number of rows (S2 patches + GT + Pred + Error)
+            num_s2_patches = context_k # Assuming context_k is the number of S2 patches
+            num_data_rows = 3 # GT, Pred, Error
+            total_rows = num_s2_patches + num_data_rows 
+            num_cols = B # Number of examples
 
-            # Rebuild the full S2 RGB stacks for visualization
-            s2_processed_selected = []
+            # Calculate figure size (adjust these constants based on desired output size)
+            tile_size_inches = 4
+            # fig_w: columns * size. We need extra width for the left-side text labels.
+            fig_w = num_cols * tile_size_inches + 2 
+            fig_h = total_rows * tile_size_inches + 1 # Add space for footer/labels
+            
+            # Create a figure and grid of subplots
+            fig, axes = plt.subplots(total_rows, num_cols, 
+                                     figsize=(fig_w, fig_h), 
+                                     squeeze=False, # Ensure axes is 2D array even for 1xN
+                                     gridspec_kw={'hspace': 0.05, 'wspace': 0.05}) 
+            
+            # Determine global elevation and error ranges for consistent colormapping
+            global_elev_min = torch.min(gt.min(), pred.min()).item()
+            global_elev_max = torch.max(gt.max(), pred.max()).item()
+            signed_error = gt.squeeze(1) - pred.squeeze(1) 
+            max_abs_error = signed_error.abs().max().item()
+
+            # Process S2 patches for visualization 
+            tileid_to_s2dir = {s['tile_id']: s['s2_group_dir'] for s in val_dataset.samples}
+            s2_viz_data = [] 
             for i in range(B):
                 tile_id = tile_ids_batch[i]
-                s2_group_dir = os.path.join(val_dataset.s2_dir, f"s2_patch_{tile_id}")
-                
-                # Retrieve the specific indices used for conditioning for this sample
+                s2_group_dir = tileid_to_s2dir.get(tile_id)
+                if s2_group_dir is None:
+                    print(f"Warning: no s2_group_dir found for tile {tile_id}; skipping S2 viz.")
+                    s2_viz_data.append([np.zeros((*gt.shape[-2:], 3), dtype=np.float32) for _ in range(context_k)])
+                    continue
                 chosen_ids = chosen_ids_batch[i].tolist()
                 
                 processed_sample = []
@@ -506,58 +598,101 @@ def run_reconstruction_evaluation(model, val_dataset, config, scheduler=None):
                     with rasterio.open(s2_path) as src:
                         arr = torch.from_numpy(src.read()[:4].astype(np.float32))
                     
-                    # Get RGB for visualization
                     rgb = arr[[0, 1, 2], :, :]
                     rgb = normalize_batch(rgb.unsqueeze(0)).squeeze(0)
                     rgb = F.interpolate(rgb.unsqueeze(0), size=gt.shape[-2:], mode="bilinear", align_corners=False).squeeze(0)
-                    processed_sample.append(rgb)
-                s2_processed_selected.append(processed_sample)
+                    processed_sample.append(rgb.permute(1, 2, 0).numpy()) # Convert to HxWx3 NumPy
+                s2_viz_data.append(processed_sample)
+
+            # Set row titles
+            row_titles = [f"S2 (t{t})" for t in chosen_ids_batch[0].tolist()] + ["GT LiDAR", "Pred LiDAR", "Error"]
+        
+            # Iterate over examples (columns)
+            for col in range(num_cols): 
+                # Data for the current example 
+                gt_i = gt[col].squeeze().numpy()
+                pred_i = pred[col].squeeze().numpy()
+                err_i = (gt[col].squeeze() - pred[col].squeeze()).numpy()
+                
+                # S2 Patches 
+                for row in range(num_s2_patches):
+                    ax = axes[row, col]
+                    s2_np = s2_viz_data[col][row]
+                    
+                    ax.imshow(s2_np) 
+                    ax.axis("off")
+
+                # Lidar GT
+                row_gt = num_s2_patches
+                ax = axes[row_gt, col]
+                im_gt = ax.imshow(gt_i, cmap='terrain', vmin=global_elev_min, vmax=global_elev_max)
+                ax.axis("off")
+               
+
+                # Lidar Pred
+                row_pred = num_s2_patches + 1
+                ax = axes[row_pred, col]
+                im_pred = ax.imshow(pred_i, cmap='terrain', vmin=global_elev_min, vmax=global_elev_max)
+                ax.axis("off")
+
+                # Error Map
+                row_err = num_s2_patches + 2
+                ax = axes[row_err, col]
+                # Define the linear scale around zero 
+                linthresh_val = 0.5
+                # Create a symmetric logarithmic normalizer
+                norm_error = mcolors.SymLogNorm(
+                    linthresh=linthresh_val, 
+                    linscale=1.0, # Linear scale for linthresh region
+                    vmin=-max_abs_error, 
+                    vmax=max_abs_error
+                )
+                im_err = ax.imshow(err_i, cmap='seismic',norm=norm_error)
+                ax.axis("off")
             
-            # Create visualization plot
-            tiles = []
-            for i in range(B):
-                # Stack only the USED S2 times, then GT, Pred, Error
-                rows = [p for p in s2_processed_selected[i]] + [gt_rgb[i], pred_rgb[i], err_rgb[i]]
-                tile = torch.cat(rows, dim=1)
-                tiles.append(tile)
+            # Set row titles
+            for row in range(total_rows):
+                ax = axes[row, 0] 
+                ax.text(-0.1, 0.5, row_titles[row], 
+                        ha="right", va="center", 
+                        transform=ax.transAxes, 
+                        fontsize=20, 
+                        fontweight='bold', 
+                        bbox=dict(facecolor='white', edgecolor='none', alpha=0.7, boxstyle='round,pad=0.3'))
 
-            full_image = torch.cat(tiles, dim=2)
-            img_np = full_image.permute(1, 2, 0).numpy()
+            # Set footer
+            footer = (f"RMSE: {rmse_mean:.2f} m  |  Bias: {bias_mean:.2f} m  |  Δσ: {sigma_mean:.2f} %  |  Δℓ: {ell_mean:.2f} %  |  NAE: {nae_mean:.2f}°  |  JSD: {jsd_mean:.2f}  |  PSD: {psd_mean:.2f}")
+            fig.text(0.5, 0.01, footer, ha='center', fontsize=23, weight='bold', color='darkblue')
 
-            # Adjust the figure height based on the number of S2 patches
-            fig_h = (context_k * 4) + 12
-            fig, ax = plt.subplots(figsize=(42, fig_h))
-            ax.axis("off")
-            ax.imshow(img_np)
+            # Identify the axes in the last column to anchor color bars
+            ax_gt_anchor = axes[row_gt, num_cols - 1]
+            ax_err_anchor = axes[row_err, num_cols - 1]
 
-            # Adjust the row labels to only show the chosen S2 patches
-            row_labels = [f"S2 t{t}" for t in chosen_ids_batch[0].tolist()] + ["GT", "Pred", "|Error|"]
-            row_height = img_np.shape[0] // len(row_labels)
-            for r, label in enumerate(row_labels):
-                y = r * row_height + row_height // 2
-                ax.text(-10, y, label, ha="right", va="center", fontsize=13, fontweight='bold',
-                        bbox=dict(facecolor='white', edgecolor='black', boxstyle='round'))
+            # GT / Pred Colorbar 
+            axins_gt = inset_axes(ax_gt_anchor, 
+                                  width="5%", 
+                                  height="205%", 
+                                  loc='right', 
+                                  bbox_to_anchor=(0.1, -0.52, 1, 1),
+                                  bbox_transform=ax_gt_anchor.transAxes)
+            fig.colorbar(im_gt, cax=axins_gt)
+
+            # Error Colorbar
+            axins_err = inset_axes(ax_err_anchor, 
+                                   width="5%", 
+                                   height="100%", 
+                                   loc='right', 
+                                   bbox_to_anchor=(0.1, 0, 1, 1), 
+                                   bbox_transform=ax_err_anchor.transAxes)
+            fig.colorbar(im_err, cax=axins_err)
+
+            # Adjust layout
+            plt.subplots_adjust(left=0.08, bottom=0.08, top=0.98, right=0.95)
             
-            tile_width = img_np.shape[1] // B
-            for i in range(B):
-                x = i * tile_width + 5
-                metrics = (f"MAE: {mae_tile[i]:.3f}\n"
-                           f"RMSE: {rmse_tile[i]:.3f}\n"
-                           f"SSIM: {ssim_tile[i]:.3f}\n"
-                           f"Topo: {topo_tile[i]:.3f}\n"
-                           f"Rough: {rough_tile[i]:.3f}")
-                ax.text(x, img_np.shape[0] + 10, metrics, ha='left', va='top',
-                        fontsize=12, bbox=dict(facecolor='white', alpha=0.85, boxstyle='round'))
-            
-            footer = (f"Mean → MAE: {mae:.3f} | RMSE: {rmse:.3f} | SSIM: {ssim_avg:.3f} | Topo RMSE: {topo_avg:.3f} | "
-                      f"Roughness: {rough_avg:.3f}")
-            ax.text(img_np.shape[1] // 2, img_np.shape[0] + 120, footer,
-                    ha='center', fontsize=16, weight='bold', color='darkblue')
-
-            plt.tight_layout()
+            # Save the figure
             out_name = config["logging"]["wandb_name"] or config["logging"]["run_name"]
             out_path = os.path.join(config["logging"]["output_dir"], f"{out_name}_{sampler_name}_vis.png")
-            fig.savefig(out_path, dpi=150, bbox_inches='tight')
+            fig.savefig(out_path, dpi=300, bbox_inches='tight') 
             plt.close()
 
             print(f"Saved visualization to {out_path}")
@@ -592,8 +727,8 @@ if __name__ == "__main__":
         config = yaml.safe_load(f)
 
     # Override YAML values with command-line arguments if provided
-    if args.s2_dir: config['data']['s2_dir'] = args.s2_dir
-    if args.lidar_dir: config['data']['lidar_dir'] = args.lidar_dir
+    if args.s2_dir: config['data']['s2_dirs'] = [args.s2_dir]
+    if args.lidar_dir: config['data']['lidar_dirs'] = [args.lidar_dir]
     if args.batch_size: config['training']['batch_size'] = args.batch_size
     if args.epochs: config['training']['epochs'] = args.epochs
     if args.lr: config['training']['lr'] = args.lr
@@ -639,8 +774,18 @@ if __name__ == "__main__":
     print("="*50)
     print(f"Model Type: Standard U-Net")
     print(f"Data Paths:")
-    print(f"  S2 Directory: {config['data']['s2_dir']}")
-    print(f"  LiDAR Directory: {config['data']['lidar_dir']}")
+    # Handle multiple directories and region names
+    train_regions = config['data'].get('train_regions', [])
+    s2_dirs = config['data'].get('s2_dirs', [])
+    lidar_dirs = config['data'].get('lidar_dirs', [])
+    print(f"  Training Regions: {', '.join(train_regions)}")
+    print("  Sentinel-2 Directories:")
+    for d in s2_dirs:
+        print(f"    - {d}")
+    print("  LiDAR Directories:")
+    for d in lidar_dirs:
+        print(f"    - {d}")
+    print(f"  S2 Stats Save Dir: {config['data']['s2_stats_dir']}")
     print(f"Training Parameters:")
     print(f"  Batch Size: {config['training']['batch_size']}")
     print(f"  Epochs: {config['training']['epochs']}")
